@@ -20,6 +20,6 @@
 
 /// <reference types="@cloudflare/workers-types" />
 
-export * from './cors';
-export * from './router';
+export * from './cors.js';
+export * from './router.js';
 export { HttpError } from '@whi/http-errors';

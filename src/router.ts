@@ -1,6 +1,6 @@
 import { HttpError } from '@whi/http-errors';
 import { Router } from 'itty-router';
-import { corsHeaders } from './cors';
+import { corsHeaders } from './cors.js';
 import Loganite from 'loganite';
 
 // Add type definitions for request augmentation
