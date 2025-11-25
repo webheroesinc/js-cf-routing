@@ -1,0 +1,20 @@
+{
+  "entryPoints": ["src/index.ts"],
+  "out": "docs",
+  "plugin": [],
+  "exclude": ["**/*.test.ts", "tests/**/*", "node_modules/**/*"],
+  "excludePrivate": true,
+  "excludeProtected": false,
+  "includeVersion": true,
+  "readme": "README.md",
+  "sort": ["source-order"],
+  "gitRevision": "master",
+  "navigation": {
+    "includeCategories": true,
+    "includeGroups": true
+  },
+  "categorizeByGroup": true,
+  "defaultCategory": "Other",
+  "categoryOrder": ["Routers", "Handlers", "Utilities", "*"],
+  "cleanOutputDir": true
+}

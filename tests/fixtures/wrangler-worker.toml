@@ -1,0 +1,6 @@
+name = "worker-router-test"
+main = "worker-router-test.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+LOG_LEVEL = "fatal"

@@ -1,0 +1,14 @@
+name = "durable-object-router-test"
+main = "durable-object-router-test.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+LOG_LEVEL = "fatal"
+
+[[durable_objects.bindings]]
+name = "COUNTER"
+class_name = "Counter"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["Counter"]

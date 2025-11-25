@@ -1,0 +1,8 @@
+node_modules
+lib
+dist
+*.log
+coverage
+.wrangler
+tests/fixtures/dist
+docs

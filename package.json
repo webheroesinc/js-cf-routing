@@ -1,0 +1,65 @@
+{
+  "name": "@whi/cf-routing",
+  "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "lib/index.js",
+  "type": "module",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "lib/**/*.js.map"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:test-worker": "esbuild tests/fixtures/worker-router-test.ts --bundle --format=esm --outfile=tests/fixtures/dist/worker-router-test.js --external:node:*",
+    "build:test-do": "esbuild tests/fixtures/durable-object-router-test.ts --bundle --format=esm --outfile=tests/fixtures/dist/durable-object-router-test.js --external:node:*",
+    "build:tests": "npm run build:test-worker && npm run build:test-do",
+    "prebuild:tests": "npm run build",
+    "pretest": "npm run build:tests",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "docs": "typedoc",
+    "docs:watch": "typedoc --watch"
+  },
+  "author": "Matthew Brisebois",
+  "license": "LGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/webheroesinc/js-cf-routing.git"
+  },
+  "description": "Routing framework for Cloudflare Workers built on itty-router with error handling, CORS, and class-based route handlers",
+  "keywords": [
+    "cloudflare",
+    "cloudflare-workers",
+    "routing",
+    "itty-router",
+    "router",
+    "middleware",
+    "cors",
+    "durable-objects"
+  ],
+  "dependencies": {
+    "@whi/http-errors": "^0.1.1",
+    "itty-router": "^5.0.18",
+    "loganite": "^0.1.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250708.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "esbuild": "^0.24.2",
+    "miniflare": "^3.20241218.1",
+    "prettier": "^3.6.2",
+    "typedoc": "^0.28.14",
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.8",
+    "wrangler": "^4.50.0"
+  }
+}
