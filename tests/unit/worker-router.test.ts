@@ -251,4 +251,104 @@ describe('RouteHandler', () => {
 
         expect(result.params).toEqual({ id: '123' });
     });
+
+    it('should have response context available', () => {
+        class CustomHandler extends RouteHandler<Env> {}
+        const handler = new CustomHandler('/test');
+
+        expect(handler.response).toBeDefined();
+        expect(handler.response.status).toBe(200);
+        expect(handler.response.headers).toBeInstanceOf(Headers);
+    });
+
+    it('should allow customizing response via this.response in full router flow', async () => {
+        class CustomResponseHandler extends RouteHandler<Env> {
+            async post() {
+                this.response.status = 201;
+                this.response.headers.set('X-Custom', 'header-value');
+                this.response.headers.set('Set-Cookie', 'session=abc123');
+                return { created: true };
+            }
+        }
+
+        const router = new WorkerRouter<Env>('test');
+        router.log.setLevel('fatal');
+        router.defineRouteHandler('/api/resource', CustomResponseHandler);
+        const builtRouter = router.build();
+
+        const request = new Request('https://example.com/api/resource', { method: 'POST' });
+        const response = await builtRouter.fetch(request, { LOG_LEVEL: 'fatal' });
+
+        expect(response.status).toBe(201);
+        expect(response.headers.get('X-Custom')).toBe('header-value');
+        expect(response.headers.get('Set-Cookie')).toBe('session=abc123');
+        expect(response.headers.get('Content-Type')).toBe('application/json');
+
+        const body = await response.json();
+        expect(body).toEqual({ created: true });
+    });
+
+    it('should allow returning Response directly for full control', async () => {
+        class FullControlHandler extends RouteHandler<Env> {
+            async get() {
+                return new Response('<html><body>Hello</body></html>', {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'text/html',
+                        'X-Custom-Header': 'custom-value',
+                    },
+                });
+            }
+        }
+
+        const router = new WorkerRouter<Env>('test');
+        router.log.setLevel('fatal');
+        router.defineRouteHandler('/page', FullControlHandler);
+        const builtRouter = router.build();
+
+        const request = new Request('https://example.com/page');
+        const response = await builtRouter.fetch(request, { LOG_LEVEL: 'fatal' });
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get('Content-Type')).toBe('text/html');
+        expect(response.headers.get('X-Custom-Header')).toBe('custom-value');
+
+        const body = await response.text();
+        expect(body).toBe('<html><body>Hello</body></html>');
+    });
+
+    it('should reset response context between requests', async () => {
+        let callCount = 0;
+
+        class ResettingHandler extends RouteHandler<Env> {
+            async get() {
+                callCount++;
+                // On first call, status should be 200 (default)
+                // Set it to 201
+                const wasDefault = this.response.status === 200;
+                this.response.status = 201;
+                return { callCount, wasDefault };
+            }
+        }
+
+        const router = new WorkerRouter<Env>('test');
+        router.log.setLevel('fatal');
+        router.defineRouteHandler('/api/test', ResettingHandler);
+        const builtRouter = router.build();
+
+        const request = new Request('https://example.com/api/test');
+        const env = { LOG_LEVEL: 'fatal' };
+
+        // First request
+        const response1 = await builtRouter.fetch(request, env);
+        const body1 = await response1.json();
+        expect(body1.wasDefault).toBe(true);
+        expect(response1.status).toBe(201);
+
+        // Second request - context should have been reset
+        const response2 = await builtRouter.fetch(request, env);
+        const body2 = await response2.json();
+        expect(body2.wasDefault).toBe(true); // Should be true again because context was reset
+        expect(response2.status).toBe(201);
+    });
 });

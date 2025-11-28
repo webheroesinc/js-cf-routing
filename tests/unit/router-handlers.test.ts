@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { handleRoute, handleMiddleware, WorkerRouter, Env } from '../../src/router';
-import { HttpError } from '../../src/index';
+import { HttpError, ResponseContext } from '../../src/index';
 
 describe('handleRoute', () => {
     let mockRouter: WorkerRouter<Env>;
@@ -229,5 +229,168 @@ describe('handleMiddleware', () => {
 
         expect(result).toBeNull();
         expect(middleware).toHaveBeenCalled();
+    });
+});
+
+describe('ResponseContext', () => {
+    it('should have default values', () => {
+        const ctx = new ResponseContext();
+
+        expect(ctx.status).toBe(200);
+        expect(ctx.statusText).toBe('OK');
+        expect(ctx.headers).toBeInstanceOf(Headers);
+    });
+
+    it('should allow setting custom status', () => {
+        const ctx = new ResponseContext();
+        ctx.status = 201;
+        ctx.statusText = 'Created';
+
+        expect(ctx.status).toBe(201);
+        expect(ctx.statusText).toBe('Created');
+    });
+
+    it('should allow setting custom headers', () => {
+        const ctx = new ResponseContext();
+        ctx.headers.set('X-Custom-Header', 'custom-value');
+        ctx.headers.set('Set-Cookie', 'session=abc123');
+
+        expect(ctx.headers.get('X-Custom-Header')).toBe('custom-value');
+        expect(ctx.headers.get('Set-Cookie')).toBe('session=abc123');
+    });
+
+    it('should reset to default values', () => {
+        const ctx = new ResponseContext();
+        ctx.status = 201;
+        ctx.statusText = 'Created';
+        ctx.headers.set('X-Custom-Header', 'value');
+
+        ctx.reset();
+
+        expect(ctx.status).toBe(200);
+        expect(ctx.statusText).toBe('OK');
+        expect(ctx.headers.get('X-Custom-Header')).toBeNull();
+    });
+});
+
+describe('handleRoute with ResponseContext', () => {
+    let mockRouter: WorkerRouter<Env>;
+    let mockRequest: Request;
+    let mockEnv: Env;
+    let responseContext: ResponseContext;
+
+    beforeEach(() => {
+        mockRouter = new WorkerRouter('test-router');
+        mockRouter.log.setLevel('fatal');
+        mockRequest = new Request('https://example.com/test');
+        mockEnv = { LOG_LEVEL: 'fatal' };
+        responseContext = new ResponseContext();
+    });
+
+    it('should use custom status from ResponseContext', async () => {
+        const handler = async () => {
+            responseContext.status = 201;
+            return { created: true };
+        };
+
+        const wrappedHandler = handleRoute(mockRouter, handler, responseContext);
+        const response = await wrappedHandler(mockRequest, mockEnv);
+
+        expect(response.status).toBe(201);
+        const body = await response.json();
+        expect(body).toEqual({ created: true });
+    });
+
+    it('should use custom statusText from ResponseContext', async () => {
+        const handler = async () => {
+            responseContext.status = 201;
+            responseContext.statusText = 'Created';
+            return { id: 123 };
+        };
+
+        const wrappedHandler = handleRoute(mockRouter, handler, responseContext);
+        const response = await wrappedHandler(mockRequest, mockEnv);
+
+        expect(response.status).toBe(201);
+        expect(response.statusText).toBe('Created');
+    });
+
+    it('should merge custom headers from ResponseContext', async () => {
+        const handler = async () => {
+            responseContext.headers.set('X-Custom-Header', 'custom-value');
+            responseContext.headers.set('Set-Cookie', 'session=abc123');
+            return { success: true };
+        };
+
+        const wrappedHandler = handleRoute(mockRouter, handler, responseContext);
+        const response = await wrappedHandler(mockRequest, mockEnv);
+
+        expect(response.headers.get('X-Custom-Header')).toBe('custom-value');
+        expect(response.headers.get('Set-Cookie')).toBe('session=abc123');
+        // Default headers should still be present
+        expect(response.headers.get('Content-Type')).toBe('application/json');
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    });
+
+    it('should allow overriding Content-Type header', async () => {
+        const handler = async () => {
+            responseContext.headers.set('Content-Type', 'text/plain');
+            return 'plain text response';
+        };
+
+        const wrappedHandler = handleRoute(mockRouter, handler, responseContext);
+        const response = await wrappedHandler(mockRequest, mockEnv);
+
+        expect(response.headers.get('Content-Type')).toBe('text/plain');
+    });
+
+    it('should reset ResponseContext between requests', async () => {
+        const handler = async () => {
+            // First call sets custom status
+            if (responseContext.status === 200) {
+                responseContext.status = 201;
+            }
+            return { status: responseContext.status };
+        };
+
+        const wrappedHandler = handleRoute(mockRouter, handler, responseContext);
+
+        // First request
+        const response1 = await wrappedHandler(mockRequest, mockEnv);
+        expect(response1.status).toBe(201);
+
+        // Second request should have reset context
+        const response2 = await wrappedHandler(mockRequest, mockEnv);
+        expect(response2.status).toBe(201); // Handler sets it again since it was reset
+    });
+
+    it('should return Response directly when handler returns Response', async () => {
+        const customResponse = new Response('custom body', {
+            status: 418,
+            headers: { 'X-Teapot': 'true' },
+        });
+
+        const handler = async () => customResponse;
+
+        const wrappedHandler = handleRoute(mockRouter, handler, responseContext);
+        const response = await wrappedHandler(mockRequest, mockEnv);
+
+        expect(response).toBe(customResponse);
+        expect(response.status).toBe(418);
+        expect(response.headers.get('X-Teapot')).toBe('true');
+    });
+
+    it('should ignore ResponseContext when handler returns Response', async () => {
+        const handler = async () => {
+            responseContext.status = 201; // This should be ignored
+            return new Response('direct response', { status: 200 });
+        };
+
+        const wrappedHandler = handleRoute(mockRouter, handler, responseContext);
+        const response = await wrappedHandler(mockRequest, mockEnv);
+
+        expect(response.status).toBe(200);
+        const body = await response.text();
+        expect(body).toBe('direct response');
     });
 });

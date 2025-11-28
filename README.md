@@ -110,6 +110,28 @@ async get(request, env, params) {
 }
 ```
 
+### Response Customization
+
+Customize status codes and headers via `this.response`:
+
+```typescript
+async post(request, env, params) {
+    this.response.status = 201;
+    this.response.headers.set('Set-Cookie', 'session=abc123');
+    return { created: true };
+}
+```
+
+Or return a `Response` directly for full control:
+
+```typescript
+async get() {
+    return new Response('<html>...</html>', {
+        headers: { 'Content-Type': 'text/html' }
+    });
+}
+```
+
 ### Built-in CORS
 
 All responses include CORS headers automatically. Customize if needed:

@@ -1,6 +1,7 @@
 import { HttpError } from '@whi/http-errors';
 import { Router } from 'itty-router';
 import { corsHeaders } from './cors.js';
+import { ResponseContext } from './response-context.js';
 import Loganite from 'loganite';
 
 // Add type definitions for request augmentation
@@ -22,25 +23,54 @@ export interface Env {
 /**
  * Wrapper function to handle JSON responses and errors for route handlers
  *
+ * Supports three return patterns:
+ * 1. Return a Response object directly for full control
+ * 2. Modify this.response (ResponseContext) and return data for the body
+ * 3. Return plain data (current behavior - JSON serialized with defaults)
+ *
  * @param handler The route handler function
+ * @param responseContext Optional ResponseContext for customizing response properties
  * @returns A wrapped handler function that handles JSON responses and errors
  */
 export const handleRoute = <E extends Env>(
     worker_router: WorkerRouter<E>,
-    handler: (request: Request, env: E, params?: Record<string, string>) => Promise<any>
+    handler: (request: Request, env: E, params?: Record<string, string>) => Promise<any>,
+    responseContext?: ResponseContext
 ) => {
     return async (request: Request, env: E) => {
         try {
             if (env.LOG_LEVEL) worker_router.log.setLevel(env.LOG_LEVEL);
             worker_router.log.trace(`Incoming request %s '%s'`, request.method, request.url);
 
+            // Reset context before each request if provided
+            if (responseContext) {
+                responseContext.reset();
+            }
+
             const result = await handler(request, env, request.params);
+
+            // If handler returns a Response directly, use it as-is
+            if (result instanceof Response) {
+                return result;
+            }
+
+            // Build response using context settings (if provided) merged with defaults
+            const headers = new Headers({
+                'Content-Type': 'application/json',
+                ...corsHeaders,
+            });
+
+            // Merge in any custom headers from the context
+            if (responseContext) {
+                responseContext.headers.forEach((value, key) => {
+                    headers.set(key, value);
+                });
+            }
+
             return new Response(JSON.stringify(result), {
-                status: 200,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...corsHeaders,
-                },
+                status: responseContext?.status ?? 200,
+                statusText: responseContext?.statusText ?? 'OK',
+                headers,
             });
         } catch (error) {
             worker_router.log.error(`Error in route handler: ${error}`);
@@ -112,6 +142,11 @@ export function handleMiddleware<P extends Params = Params>(
  * Extend this class to create handlers for specific routes. By default, all HTTP methods
  * throw a 405 Method Not Allowed error. Override the methods you want to support.
  *
+ * Response customization:
+ * - Use `this.response` to modify status, statusText, or headers before returning data
+ * - Return a `Response` object directly for full control
+ * - Return plain data for default JSON serialization
+ *
  * @typeParam E - Environment type
  * @typeParam P - Route parameters type
  *
@@ -126,6 +161,9 @@ export function handleMiddleware<P extends Params = Params>(
  *
  *   async post(request, env, params) {
  *     const body = await request.json();
+ *     // Customize response
+ *     this.response.status = 201;
+ *     this.response.headers.set('X-Created-Id', params.id);
  *     return { userId: params.id, created: true, data: body };
  *   }
  * }
@@ -137,8 +175,22 @@ export abstract class RouteHandler<E = any, P extends Params = Params> {
     protected path: string;
     log: Loganite;
 
+    /**
+     * Response context for customizing the response.
+     * Modify status, statusText, or headers before returning data.
+     *
+     * @example
+     * ```typescript
+     * this.response.status = 201;
+     * this.response.headers.set('Set-Cookie', 'session=abc123');
+     * return { created: true };
+     * ```
+     */
+    response: ResponseContext;
+
     constructor(path: string, options?: { log?: Loganite }) {
         this.path = path;
+        this.response = new ResponseContext();
 
         if (options?.log) this.log = options.log;
         else this.log = new Loganite(path, 'fatal');
@@ -286,35 +338,50 @@ export class WorkerRouter<E extends Env> {
             log: this.log,
         });
 
-        // Register each HTTP method with the router
+        // Register each HTTP method with the router, passing the handler's response context
         this.router.post(
             path,
-            handleRoute(this, (request: Request, env: E, params?: Record<string, string>) =>
-                handler.post(request, env, params)
+            handleRoute(
+                this,
+                (request: Request, env: E, params?: Record<string, string>) =>
+                    handler.post(request, env, params),
+                handler.response
             )
         );
         this.router.get(
             path,
-            handleRoute(this, (request: Request, env: E, params?: Record<string, string>) =>
-                handler.get(request, env, params)
+            handleRoute(
+                this,
+                (request: Request, env: E, params?: Record<string, string>) =>
+                    handler.get(request, env, params),
+                handler.response
             )
         );
         this.router.put(
             path,
-            handleRoute(this, (request: Request, env: E, params?: Record<string, string>) =>
-                handler.put(request, env, params)
+            handleRoute(
+                this,
+                (request: Request, env: E, params?: Record<string, string>) =>
+                    handler.put(request, env, params),
+                handler.response
             )
         );
         this.router.delete(
             path,
-            handleRoute(this, (request: Request, env: E, params?: Record<string, string>) =>
-                handler.delete(request, env, params)
+            handleRoute(
+                this,
+                (request: Request, env: E, params?: Record<string, string>) =>
+                    handler.delete(request, env, params),
+                handler.response
             )
         );
         this.router.patch(
             path,
-            handleRoute(this, (request: Request, env: E, params?: Record<string, string>) =>
-                handler.patch(request, env, params)
+            handleRoute(
+                this,
+                (request: Request, env: E, params?: Record<string, string>) =>
+                    handler.patch(request, env, params),
+                handler.response
             )
         );
 
@@ -360,23 +427,52 @@ export class WorkerRouter<E extends Env> {
 }
 
 /**
- * Wrapper function to handle JSON responses and errors for route handlers
+ * Wrapper function to handle JSON responses and errors for Durable Object route handlers
+ *
+ * Supports three return patterns:
+ * 1. Return a Response object directly for full control
+ * 2. Modify this.response (ResponseContext) and return data for the body
+ * 3. Return plain data (current behavior - JSON serialized with defaults)
  *
  * @param handler The route handler function
+ * @param responseContext Optional ResponseContext for customizing response properties
  * @returns A wrapped handler function that handles JSON responses and errors
  */
 export const handleDurableObjectRoute = (
-    handler: (request: Request, params?: Record<string, string>) => Promise<any>
+    handler: (request: Request, params?: Record<string, string>) => Promise<any>,
+    responseContext?: ResponseContext
 ) => {
     return async (request: Request) => {
         try {
+            // Reset context before each request if provided
+            if (responseContext) {
+                responseContext.reset();
+            }
+
             const result = await handler(request, request.params);
+
+            // If handler returns a Response directly, use it as-is
+            if (result instanceof Response) {
+                return result;
+            }
+
+            // Build response using context settings (if provided) merged with defaults
+            const headers = new Headers({
+                'Content-Type': 'application/json',
+                ...corsHeaders,
+            });
+
+            // Merge in any custom headers from the context
+            if (responseContext) {
+                responseContext.headers.forEach((value, key) => {
+                    headers.set(key, value);
+                });
+            }
+
             return new Response(JSON.stringify(result), {
-                status: 200,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...corsHeaders,
-                },
+                status: responseContext?.status ?? 200,
+                statusText: responseContext?.statusText ?? 'OK',
+                headers,
             });
         } catch (error) {
             // console.error(`Error in route handler: ${error}`);
@@ -438,6 +534,11 @@ export function handleDurableObjectMiddleware<P extends Params = Params>(
  * Extend this class to create handlers for Durable Object routes with access to state and environment.
  * By default, all HTTP methods throw a 405 Method Not Allowed error. Override the methods you want to support.
  *
+ * Response customization:
+ * - Use `this.response` to modify status, statusText, or headers before returning data
+ * - Return a `Response` object directly for full control
+ * - Return plain data for default JSON serialization
+ *
  * @typeParam E - Environment type
  * @typeParam P - Route parameters type
  *
@@ -454,6 +555,7 @@ export function handleDurableObjectMiddleware<P extends Params = Params>(
  *   async post() {
  *     const current = await this.ctx.storage.get<number>('count') || 0;
  *     await this.ctx.storage.put('count', current + 1);
+ *     this.response.status = 201;
  *     return { count: current + 1 };
  *   }
  * }
@@ -465,10 +567,24 @@ export abstract class DurableObjectRouteHandler<E extends Env, P extends Params 
     protected env: E;
     protected log: Loganite;
 
+    /**
+     * Response context for customizing the response.
+     * Modify status, statusText, or headers before returning data.
+     *
+     * @example
+     * ```typescript
+     * this.response.status = 201;
+     * this.response.headers.set('Set-Cookie', 'session=abc123');
+     * return { created: true };
+     * ```
+     */
+    response: ResponseContext;
+
     constructor(path: string, ctx: DurableObjectState, env: E, options?: { log?: Loganite }) {
         this.path = path;
         this.ctx = ctx;
         this.env = env;
+        this.response = new ResponseContext();
 
         if (options?.log) this.log = options.log;
         else this.log = new Loganite(path, 'fatal');
@@ -601,35 +717,43 @@ export class DurableObjectRouter<E extends Env> {
             log: this.log,
         });
 
-        // Register each HTTP method with the router
+        // Register each HTTP method with the router, passing the handler's response context
         this.router.post(
             path,
-            handleDurableObjectRoute((request: Request, params?: Record<string, string>) =>
-                handler.post(request, params)
+            handleDurableObjectRoute(
+                (request: Request, params?: Record<string, string>) =>
+                    handler.post(request, params),
+                handler.response
             )
         );
         this.router.get(
             path,
-            handleDurableObjectRoute((request: Request, params?: Record<string, string>) =>
-                handler.get(request, params)
+            handleDurableObjectRoute(
+                (request: Request, params?: Record<string, string>) => handler.get(request, params),
+                handler.response
             )
         );
         this.router.put(
             path,
-            handleDurableObjectRoute((request: Request, params?: Record<string, string>) =>
-                handler.put(request, params)
+            handleDurableObjectRoute(
+                (request: Request, params?: Record<string, string>) => handler.put(request, params),
+                handler.response
             )
         );
         this.router.delete(
             path,
-            handleDurableObjectRoute((request: Request, params?: Record<string, string>) =>
-                handler.delete(request, params)
+            handleDurableObjectRoute(
+                (request: Request, params?: Record<string, string>) =>
+                    handler.delete(request, params),
+                handler.response
             )
         );
         this.router.patch(
             path,
-            handleDurableObjectRoute((request: Request, params?: Record<string, string>) =>
-                handler.patch(request, params)
+            handleDurableObjectRoute(
+                (request: Request, params?: Record<string, string>) =>
+                    handler.patch(request, params),
+                handler.response
             )
         );
 
