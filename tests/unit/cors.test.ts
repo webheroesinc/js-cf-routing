@@ -1,19 +1,81 @@
 import { describe, it, expect } from 'vitest';
-import { corsHeaders, addCorsHeaders, createCorsHandler } from '../../lib/cors.js';
+import { corsHeaders, addCorsHeaders, createCorsHandler, buildCorsHeaders, CorsConfig } from '../../lib/cors.js';
 
 describe('CORS Utilities', () => {
     describe('corsHeaders', () => {
         it('should have correct default CORS headers', () => {
-            expect(corsHeaders).toHaveProperty('Access-Control-Allow-Origin', '*');
+            // Access-Control-Allow-Origin is NOT included by default (security fix)
+            expect(corsHeaders).not.toHaveProperty('Access-Control-Allow-Origin');
             expect(corsHeaders).toHaveProperty('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
             expect(corsHeaders).toHaveProperty('Access-Control-Allow-Headers');
             expect(corsHeaders).toHaveProperty('Access-Control-Max-Age', '86400');
-            expect(corsHeaders).toHaveProperty('Access-Control-Allow-Credentials', 'true');
+            // Access-Control-Allow-Credentials is NOT included by default (was incompatible with *)
+            expect(corsHeaders).not.toHaveProperty('Access-Control-Allow-Credentials');
+        });
+    });
+
+    describe('buildCorsHeaders', () => {
+        it('should build headers with wildcard origin', () => {
+            const config: CorsConfig = { origins: '*' };
+            const headers = buildCorsHeaders(config);
+
+            expect(headers['Access-Control-Allow-Origin']).toBe('*');
+            expect(headers['Access-Control-Allow-Methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
+        });
+
+        it('should build headers with specific origin', () => {
+            const config: CorsConfig = { origins: 'https://example.com' };
+            const headers = buildCorsHeaders(config);
+
+            expect(headers['Access-Control-Allow-Origin']).toBe('https://example.com');
+        });
+
+        it('should build headers with origin array (matching request)', () => {
+            const config: CorsConfig = { origins: ['https://example.com', 'https://other.com'] };
+            const headers = buildCorsHeaders(config, 'https://example.com');
+
+            expect(headers['Access-Control-Allow-Origin']).toBe('https://example.com');
+            expect(headers['Vary']).toBe('Origin');
+        });
+
+        it('should not include origin for array when request origin not in list', () => {
+            const config: CorsConfig = { origins: ['https://example.com'] };
+            const headers = buildCorsHeaders(config, 'https://malicious.com');
+
+            expect(headers['Access-Control-Allow-Origin']).toBeUndefined();
+        });
+
+        it('should add credentials header when enabled with specific origin', () => {
+            const config: CorsConfig = { origins: 'https://example.com', credentials: true };
+            const headers = buildCorsHeaders(config);
+
+            expect(headers['Access-Control-Allow-Credentials']).toBe('true');
+        });
+
+        it('should not add credentials header without origin', () => {
+            const config: CorsConfig = { credentials: true };
+            const headers = buildCorsHeaders(config);
+
+            expect(headers['Access-Control-Allow-Credentials']).toBeUndefined();
+        });
+
+        it('should allow custom methods and headers', () => {
+            const config: CorsConfig = {
+                origins: '*',
+                methods: 'GET, POST',
+                headers: 'X-Custom-Header',
+                maxAge: '3600',
+            };
+            const headers = buildCorsHeaders(config);
+
+            expect(headers['Access-Control-Allow-Methods']).toBe('GET, POST');
+            expect(headers['Access-Control-Allow-Headers']).toBe('X-Custom-Header');
+            expect(headers['Access-Control-Max-Age']).toBe('3600');
         });
     });
 
     describe('addCorsHeaders', () => {
-        it('should add CORS headers to response', () => {
+        it('should add default CORS headers to response (without origin)', () => {
             const originalResponse = new Response('test', {
                 status: 200,
                 headers: { 'Content-Type': 'text/plain' },
@@ -21,9 +83,22 @@ describe('CORS Utilities', () => {
 
             const modifiedResponse = addCorsHeaders(originalResponse);
 
-            expect(modifiedResponse.headers.get('Access-Control-Allow-Origin')).toBe('*');
+            // Default headers don't include origin
+            expect(modifiedResponse.headers.get('Access-Control-Allow-Origin')).toBeNull();
+            expect(modifiedResponse.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, PUT, DELETE, OPTIONS');
             expect(modifiedResponse.headers.get('Content-Type')).toBe('text/plain');
             expect(modifiedResponse.status).toBe(200);
+        });
+
+        it('should add CORS headers with config', () => {
+            const originalResponse = new Response('test', {
+                status: 200,
+                headers: { 'Content-Type': 'text/plain' },
+            });
+
+            const modifiedResponse = addCorsHeaders(originalResponse, { origins: '*' });
+
+            expect(modifiedResponse.headers.get('Access-Control-Allow-Origin')).toBe('*');
         });
 
         it('should preserve existing headers', () => {
@@ -35,7 +110,18 @@ describe('CORS Utilities', () => {
             const modifiedResponse = addCorsHeaders(originalResponse);
 
             expect(modifiedResponse.headers.get('X-Custom-Header')).toBe('custom-value');
-            expect(modifiedResponse.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        });
+
+        it('should NOT override existing CORS headers', () => {
+            const originalResponse = new Response('test', {
+                status: 200,
+                headers: { 'Access-Control-Allow-Origin': 'https://myapp.com' },
+            });
+
+            const modifiedResponse = addCorsHeaders(originalResponse, { origins: '*' });
+
+            // Should preserve the handler's custom origin
+            expect(modifiedResponse.headers.get('Access-Control-Allow-Origin')).toBe('https://myapp.com');
         });
 
         it('should preserve response body', async () => {

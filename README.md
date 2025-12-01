@@ -132,13 +132,34 @@ async get() {
 }
 ```
 
-### Built-in CORS
+### CORS Support
 
-All responses include CORS headers automatically. Customize if needed:
+Configure CORS at the router level or per-handler with dynamic control:
 
 ```typescript
-import { corsHeaders, createCorsHandler } from '@whi/cf-routing';
+// Router-level CORS (applies to all handlers without their own cors())
+const router = new WorkerRouter<Env>('api', {
+    cors: { origins: '*' }
+});
+
+// Per-handler dynamic CORS
+class ApiHandler extends RouteHandler<Env> {
+    cors(request: Request, env: Env) {
+        const origin = request.headers.get('Origin');
+        // Allow specific subdomains
+        if (origin?.endsWith('.myapp.com')) {
+            return { origins: origin, credentials: true };
+        }
+        return undefined; // Use router default
+    }
+
+    async get() {
+        return { data: 'hello' };
+    }
+}
 ```
+
+CORS headers are automatically consistent between OPTIONS preflight and actual responses.
 
 ### Middleware Support
 

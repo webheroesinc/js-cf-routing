@@ -43,13 +43,31 @@ describe('handleDurableObjectRoute', () => {
         expect(body).toEqual({ message: 'success', value: 42 });
     });
 
-    it('should include CORS headers in successful response', async () => {
+    it('should include CORS headers in successful response (without origin by default)', async () => {
         const handler = async () => ({ result: 'ok' });
         const wrappedHandler = handleDurableObjectRoute(handler);
         const response = await wrappedHandler(mockRequest);
 
-        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        // By default, Access-Control-Allow-Origin is NOT set (security fix)
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
         expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, PUT, DELETE, OPTIONS');
+    });
+
+    it('should include CORS origin when configured via getCorsConfig function', async () => {
+        const handler = async () => ({ result: 'ok' });
+        const getCorsConfig = () => ({ origins: '*' as const });
+        const wrappedHandler = handleDurableObjectRoute(handler, undefined, getCorsConfig);
+        const response = await wrappedHandler(mockRequest);
+
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    });
+
+    it('should include CORS origin when configured via router fallback', async () => {
+        const handler = async () => ({ result: 'ok' });
+        const wrappedHandler = handleDurableObjectRoute(handler, undefined, undefined, { origins: '*' });
+        const response = await wrappedHandler(mockRequest);
+
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
     });
 
     it('should pass request params to handler', async () => {
@@ -106,7 +124,7 @@ describe('handleDurableObjectRoute', () => {
         expect(body).toEqual({ error: 'Internal Server Error' });
     });
 
-    it('should include CORS headers in error response', async () => {
+    it('should include CORS headers in error response (without origin by default)', async () => {
         const handler = async () => {
             throw new HttpError(403, 'Forbidden');
         };
@@ -114,7 +132,9 @@ describe('handleDurableObjectRoute', () => {
         const wrappedHandler = handleDurableObjectRoute(handler);
         const response = await wrappedHandler(mockRequest);
 
-        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        // By default, Access-Control-Allow-Origin is NOT set
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+        expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, PUT, DELETE, OPTIONS');
     });
 });
 
@@ -179,7 +199,7 @@ describe('handleDurableObjectMiddleware', () => {
         expect(body).toEqual({ error: 'Internal Server Error' });
     });
 
-    it('should include CORS headers in error response', async () => {
+    it('should include CORS headers in error response (without origin by default)', async () => {
         const middleware = async () => {
             throw new HttpError(401, 'Unauthorized');
         };
@@ -187,7 +207,9 @@ describe('handleDurableObjectMiddleware', () => {
         const wrappedMiddleware = handleDurableObjectMiddleware(middleware);
         const response = await wrappedMiddleware(mockRequest);
 
-        expect(response?.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        // By default, Access-Control-Allow-Origin is NOT set
+        expect(response?.headers.get('Access-Control-Allow-Origin')).toBeNull();
+        expect(response?.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, PUT, DELETE, OPTIONS');
     });
 
     it('should handle synchronous middleware', async () => {

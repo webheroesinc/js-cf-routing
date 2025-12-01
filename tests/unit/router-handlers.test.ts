@@ -29,13 +29,25 @@ describe('handleRoute', () => {
         expect(body).toEqual({ message: 'success', data: 123 });
     });
 
-    it('should include CORS headers in successful response', async () => {
+    it('should include CORS headers in successful response (without origin by default)', async () => {
         const handler = async () => ({ result: 'ok' });
         const wrappedHandler = handleRoute(mockRouter, handler);
         const response = await wrappedHandler(mockRequest, mockEnv);
 
-        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        // By default, Access-Control-Allow-Origin is NOT set (security fix)
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
         expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, PUT, DELETE, OPTIONS');
+    });
+
+    it('should include CORS origin when configured', async () => {
+        const routerWithCors = new WorkerRouter<Env>('test-router', { cors: { origins: '*' } });
+        routerWithCors.log.setLevel('fatal');
+
+        const handler = async () => ({ result: 'ok' });
+        const wrappedHandler = handleRoute(routerWithCors, handler);
+        const response = await wrappedHandler(mockRequest, mockEnv);
+
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
     });
 
     it('should pass request params to handler', async () => {
@@ -107,7 +119,7 @@ describe('handleRoute', () => {
         expect(body).toEqual({ error: 'Internal Server Error' });
     });
 
-    it('should include CORS headers in error response', async () => {
+    it('should include CORS headers in error response (without origin by default)', async () => {
         const handler = async () => {
             throw new HttpError(400, 'Bad Request');
         };
@@ -115,7 +127,8 @@ describe('handleRoute', () => {
         const wrappedHandler = handleRoute(mockRouter, handler);
         const response = await wrappedHandler(mockRequest, mockEnv);
 
-        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        // By default, Access-Control-Allow-Origin is NOT set
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
         expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, PUT, DELETE, OPTIONS');
     });
 
@@ -197,7 +210,7 @@ describe('handleMiddleware', () => {
         expect(body).toEqual({ error: 'Internal Server Error' });
     });
 
-    it('should include CORS headers in middleware error response', async () => {
+    it('should include CORS headers in middleware error response (without origin by default)', async () => {
         const middleware = async () => {
             throw new HttpError(403, 'Forbidden');
         };
@@ -205,7 +218,9 @@ describe('handleMiddleware', () => {
         const wrappedMiddleware = handleMiddleware(mockRouter, middleware);
         const response = await wrappedMiddleware(mockRequest, mockEnv);
 
-        expect(response?.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        // By default, Access-Control-Allow-Origin is NOT set
+        expect(response?.headers.get('Access-Control-Allow-Origin')).toBeNull();
+        expect(response?.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, PUT, DELETE, OPTIONS');
     });
 
     it('should set log level from env', async () => {
@@ -329,7 +344,21 @@ describe('handleRoute with ResponseContext', () => {
         expect(response.headers.get('Set-Cookie')).toBe('session=abc123');
         // Default headers should still be present
         expect(response.headers.get('Content-Type')).toBe('application/json');
-        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, PUT, DELETE, OPTIONS');
+    });
+
+    it('should allow handler to set custom CORS origin via ResponseContext', async () => {
+        const handler = async () => {
+            responseContext.headers.set('Access-Control-Allow-Origin', 'https://myapp.com');
+            responseContext.headers.set('Access-Control-Allow-Credentials', 'true');
+            return { success: true };
+        };
+
+        const wrappedHandler = handleRoute(mockRouter, handler, responseContext);
+        const response = await wrappedHandler(mockRequest, mockEnv);
+
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://myapp.com');
+        expect(response.headers.get('Access-Control-Allow-Credentials')).toBe('true');
     });
 
     it('should allow overriding Content-Type header', async () => {

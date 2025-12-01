@@ -45,10 +45,11 @@ describe('WorkerRouter Integration Smoke Tests', () => {
         expect(data.error).toBe('Bad Request Error');
     });
 
-    it('should include CORS headers', async () => {
+    it('should include CORS headers (without origin by default)', async () => {
         const response = await worker.mf.dispatchFetch('http://localhost/health');
 
-        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+        // By default, Access-Control-Allow-Origin is NOT set (security fix)
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
         expect(response.headers.get('Access-Control-Allow-Methods')).toContain('GET');
     });
 });

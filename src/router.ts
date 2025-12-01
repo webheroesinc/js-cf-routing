@@ -1,6 +1,6 @@
 import { HttpError } from '@whi/http-errors';
 import { Router } from 'itty-router';
-import { corsHeaders } from './cors.js';
+import { corsHeaders, CorsConfig, buildCorsHeaders } from './cors.js';
 import { ResponseContext } from './response-context.js';
 import Loganite from 'loganite';
 
@@ -30,12 +30,14 @@ export interface Env {
  *
  * @param handler The route handler function
  * @param responseContext Optional ResponseContext for customizing response properties
+ * @param getCorsConfig Function to get CORS config dynamically from the handler
  * @returns A wrapped handler function that handles JSON responses and errors
  */
 export const handleRoute = <E extends Env>(
     worker_router: WorkerRouter<E>,
     handler: (request: Request, env: E, params?: Record<string, string>) => Promise<any>,
-    responseContext?: ResponseContext
+    responseContext?: ResponseContext,
+    getCorsConfig?: (request: Request, env: E, params?: Record<string, string>) => CorsConfig | undefined
 ) => {
     return async (request: Request, env: E) => {
         try {
@@ -54,13 +56,21 @@ export const handleRoute = <E extends Env>(
                 return result;
             }
 
+            // Get CORS headers: handler.cors() > router.corsConfig > defaults
+            const requestOrigin = request.headers.get('Origin');
+            const handlerCorsConfig = getCorsConfig?.(request, env, request.params);
+            const effectiveCorsConfig = handlerCorsConfig ?? worker_router.corsConfig;
+            const corsHeadersToApply = effectiveCorsConfig
+                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
+                : corsHeaders;
+
             // Build response using context settings (if provided) merged with defaults
             const headers = new Headers({
                 'Content-Type': 'application/json',
-                ...corsHeaders,
+                ...corsHeadersToApply,
             });
 
-            // Merge in any custom headers from the context
+            // Merge in any custom headers from the context (overrides defaults)
             if (responseContext) {
                 responseContext.headers.forEach((value, key) => {
                     headers.set(key, value);
@@ -77,11 +87,19 @@ export const handleRoute = <E extends Env>(
             const status = error instanceof HttpError ? error.status : 500;
             const message = error instanceof HttpError ? error.message : 'Internal Server Error';
 
+            // Get CORS headers: handler.cors() > router.corsConfig > defaults
+            const requestOrigin = request.headers.get('Origin');
+            const handlerCorsConfig = getCorsConfig?.(request, env, request.params);
+            const effectiveCorsConfig = handlerCorsConfig ?? worker_router.corsConfig;
+            const corsHeadersToApply = effectiveCorsConfig
+                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
+                : corsHeaders;
+
             return new Response(JSON.stringify({ error: message }), {
                 status,
                 headers: {
                     'Content-Type': 'application/json',
-                    ...corsHeaders,
+                    ...corsHeadersToApply,
                 },
             });
         }
@@ -125,11 +143,17 @@ export function handleMiddleware<P extends Params = Params>(
             const status = error instanceof HttpError ? error.status : 500;
             const message = error instanceof HttpError ? error.message : 'Internal Server Error';
 
+            // Get CORS headers based on config
+            const requestOrigin = request.headers.get('Origin');
+            const corsHeadersToApply = worker_router.corsConfig
+                ? buildCorsHeaders(worker_router.corsConfig, requestOrigin)
+                : corsHeaders;
+
             return new Response(JSON.stringify({ error: message }), {
                 status,
                 headers: {
                     'Content-Type': 'application/json',
-                    ...corsHeaders,
+                    ...corsHeadersToApply,
                 },
             });
         }
@@ -196,6 +220,34 @@ export abstract class RouteHandler<E = any, P extends Params = Params> {
         else this.log = new Loganite(path, 'fatal');
     }
 
+    /**
+     * Define CORS configuration for this route handler.
+     * Override this method to enable CORS with dynamic configuration based on the request.
+     * The same config is automatically applied to both OPTIONS preflight and actual responses.
+     *
+     * Return undefined to use the router's default CORS config (if any).
+     *
+     * @example
+     * ```typescript
+     * class MyHandler extends RouteHandler<Env> {
+     *   cors(request: Request, env: Env): CorsConfig | undefined {
+     *     const origin = request.headers.get('Origin');
+     *     if (origin?.endsWith('.myapp.com')) {
+     *       return { origins: origin, credentials: true };
+     *     }
+     *     return undefined; // Use router default or no CORS
+     *   }
+     *
+     *   async get() {
+     *     return { data: 'hello' };
+     *   }
+     * }
+     * ```
+     */
+    cors(request: Request, env: E, params?: P): CorsConfig | undefined {
+        return undefined;
+    }
+
     // HTTP method handlers that can be implemented by subclasses
     async get(request: Request, env: E, params?: P): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
@@ -219,6 +271,19 @@ export abstract class RouteHandler<E = any, P extends Params = Params> {
 }
 
 /**
+ * Options for WorkerRouter constructor
+ *
+ * @category Types
+ */
+export interface WorkerRouterOptions {
+    /**
+     * CORS configuration for the router.
+     * If not provided, default CORS headers (without Access-Control-Allow-Origin) are used.
+     */
+    cors?: CorsConfig;
+}
+
+/**
  * Router for Cloudflare Workers with class-based handlers and automatic error handling
  *
  * @typeParam E - Environment type extending base Env interface
@@ -238,6 +303,17 @@ export abstract class RouteHandler<E = any, P extends Params = Params> {
  *   }
  * };
  * ```
+ *
+ * @example
+ * ```typescript
+ * // With CORS configuration
+ * const router = new WorkerRouter<Env>('my-worker', {
+ *   cors: {
+ *     origins: ['https://myapp.com', 'https://staging.myapp.com'],
+ *     credentials: true,
+ *   }
+ * });
+ * ```
  */
 export class WorkerRouter<E extends Env> {
     /** Router name for logging */
@@ -246,25 +322,23 @@ export class WorkerRouter<E extends Env> {
     log: Loganite;
     /** Underlying itty-router instance */
     router: ReturnType<typeof Router>;
+    /** CORS configuration */
+    corsConfig?: CorsConfig;
 
     /**
      * Create a new WorkerRouter
      * @param name - Router name (default: 'unnamed')
+     * @param options - Router options including CORS configuration
      * @param args - Additional arguments passed to itty-router
      */
-    constructor(name: string = 'unnamed', ...args: Parameters<typeof Router>) {
+    constructor(
+        name: string = 'unnamed',
+        options?: WorkerRouterOptions,
+        ...args: Parameters<typeof Router>
+    ) {
         this.name = name;
+        this.corsConfig = options?.cors;
         this.router = Router(...args);
-
-        // Handle CORS preflight requests
-        this.router.options(
-            '*',
-            () =>
-                new Response(null, {
-                    status: 204,
-                    headers: corsHeaders,
-                })
-        );
         this.log = new Loganite(name, 'fatal');
     }
 
@@ -338,14 +412,34 @@ export class WorkerRouter<E extends Env> {
             log: this.log,
         });
 
-        // Register each HTTP method with the router, passing the handler's response context
+        // Create a function to get CORS config dynamically from the handler
+        const getCorsConfig = (request: Request, env: E, params?: Record<string, string>) =>
+            handler.cors(request, env, params);
+
+        // Register OPTIONS handler with consistent CORS headers (calls handler.cors())
+        this.router.options(path, (request: Request, env: E) => {
+            const requestOrigin = request.headers.get('Origin');
+            const handlerCorsConfig = handler.cors(request, env, request.params);
+            const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
+            const headersToUse = effectiveCorsConfig
+                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
+                : corsHeaders;
+
+            return new Response(null, {
+                status: 204,
+                headers: headersToUse,
+            });
+        });
+
+        // Register each HTTP method with the router, passing the dynamic CORS getter
         this.router.post(
             path,
             handleRoute(
                 this,
                 (request: Request, env: E, params?: Record<string, string>) =>
                     handler.post(request, env, params),
-                handler.response
+                handler.response,
+                getCorsConfig
             )
         );
         this.router.get(
@@ -354,7 +448,8 @@ export class WorkerRouter<E extends Env> {
                 this,
                 (request: Request, env: E, params?: Record<string, string>) =>
                     handler.get(request, env, params),
-                handler.response
+                handler.response,
+                getCorsConfig
             )
         );
         this.router.put(
@@ -363,7 +458,8 @@ export class WorkerRouter<E extends Env> {
                 this,
                 (request: Request, env: E, params?: Record<string, string>) =>
                     handler.put(request, env, params),
-                handler.response
+                handler.response,
+                getCorsConfig
             )
         );
         this.router.delete(
@@ -372,7 +468,8 @@ export class WorkerRouter<E extends Env> {
                 this,
                 (request: Request, env: E, params?: Record<string, string>) =>
                     handler.delete(request, env, params),
-                handler.response
+                handler.response,
+                getCorsConfig
             )
         );
         this.router.patch(
@@ -381,7 +478,8 @@ export class WorkerRouter<E extends Env> {
                 this,
                 (request: Request, env: E, params?: Record<string, string>) =>
                     handler.patch(request, env, params),
-                handler.response
+                handler.response,
+                getCorsConfig
             )
         );
 
@@ -409,18 +507,35 @@ export class WorkerRouter<E extends Env> {
      * ```
      */
     build(): WorkerRouter<E>['router'] {
+        // Handle CORS preflight requests (catch-all for routes without custom OPTIONS handlers)
+        // Registered here so specific route OPTIONS handlers take precedence
+        this.router.options('*', (request: Request) => {
+            const requestOrigin = request.headers.get('Origin');
+            const headersToUse = this.corsConfig
+                ? buildCorsHeaders(this.corsConfig, requestOrigin)
+                : corsHeaders;
+
+            return new Response(null, {
+                status: 204,
+                headers: headersToUse,
+            });
+        });
+
         // Handle 404 - Route not found
-        this.router.all(
-            '*',
-            () =>
-                new Response(JSON.stringify({ error: 'Not found' }), {
-                    status: 404,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...corsHeaders,
-                    },
-                })
-        );
+        this.router.all('*', (request: Request) => {
+            const requestOrigin = request.headers.get('Origin');
+            const corsHeadersToApply = this.corsConfig
+                ? buildCorsHeaders(this.corsConfig, requestOrigin)
+                : corsHeaders;
+
+            return new Response(JSON.stringify({ error: 'Not found' }), {
+                status: 404,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...corsHeadersToApply,
+                },
+            });
+        });
 
         return this.router;
     }
@@ -436,11 +551,15 @@ export class WorkerRouter<E extends Env> {
  *
  * @param handler The route handler function
  * @param responseContext Optional ResponseContext for customizing response properties
+ * @param getCorsConfig Function to get CORS config dynamically, or static config
+ * @param routerCorsConfig Router-level CORS config (fallback)
  * @returns A wrapped handler function that handles JSON responses and errors
  */
 export const handleDurableObjectRoute = (
     handler: (request: Request, params?: Record<string, string>) => Promise<any>,
-    responseContext?: ResponseContext
+    responseContext?: ResponseContext,
+    getCorsConfig?: (request: Request, params?: Record<string, string>) => CorsConfig | undefined,
+    routerCorsConfig?: CorsConfig
 ) => {
     return async (request: Request) => {
         try {
@@ -456,13 +575,21 @@ export const handleDurableObjectRoute = (
                 return result;
             }
 
+            // Get CORS headers: handler.cors() > router.corsConfig > defaults
+            const requestOrigin = request.headers.get('Origin');
+            const handlerCorsConfig = getCorsConfig?.(request, request.params);
+            const effectiveCorsConfig = handlerCorsConfig ?? routerCorsConfig;
+            const corsHeadersToApply = effectiveCorsConfig
+                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
+                : corsHeaders;
+
             // Build response using context settings (if provided) merged with defaults
             const headers = new Headers({
                 'Content-Type': 'application/json',
-                ...corsHeaders,
+                ...corsHeadersToApply,
             });
 
-            // Merge in any custom headers from the context
+            // Merge in any custom headers from the context (overrides defaults)
             if (responseContext) {
                 responseContext.headers.forEach((value, key) => {
                     headers.set(key, value);
@@ -479,11 +606,19 @@ export const handleDurableObjectRoute = (
             const status = error instanceof HttpError ? error.status : 500;
             const message = error instanceof HttpError ? error.message : 'Internal Server Error';
 
+            // Get CORS headers: handler.cors() > router.corsConfig > defaults
+            const requestOrigin = request.headers.get('Origin');
+            const handlerCorsConfig = getCorsConfig?.(request, request.params);
+            const effectiveCorsConfig = handlerCorsConfig ?? routerCorsConfig;
+            const corsHeadersToApply = effectiveCorsConfig
+                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
+                : corsHeaders;
+
             return new Response(JSON.stringify({ error: message }), {
                 status,
                 headers: {
                     'Content-Type': 'application/json',
-                    ...corsHeaders,
+                    ...corsHeadersToApply,
                 },
             });
         }
@@ -504,10 +639,12 @@ export type DurableObjectMiddleware<P extends Params = Params> = (
  * Wrapper function for middleware to handle errors consistently
  *
  * @param middleware The middleware function
+ * @param corsConfig Optional CORS configuration
  * @returns A wrapped middleware function that handles errors
  */
 export function handleDurableObjectMiddleware<P extends Params = Params>(
-    middleware: DurableObjectMiddleware<P>
+    middleware: DurableObjectMiddleware<P>,
+    corsConfig?: CorsConfig
 ) {
     return async (request: Request) => {
         try {
@@ -517,11 +654,17 @@ export function handleDurableObjectMiddleware<P extends Params = Params>(
             const status = error instanceof HttpError ? error.status : 500;
             const message = error instanceof HttpError ? error.message : 'Internal Server Error';
 
+            // Get CORS headers based on config
+            const requestOrigin = request.headers.get('Origin');
+            const corsHeadersToApply = corsConfig
+                ? buildCorsHeaders(corsConfig, requestOrigin)
+                : corsHeaders;
+
             return new Response(JSON.stringify({ error: message }), {
                 status,
                 headers: {
                     'Content-Type': 'application/json',
-                    ...corsHeaders,
+                    ...corsHeadersToApply,
                 },
             });
         }
@@ -590,6 +733,34 @@ export abstract class DurableObjectRouteHandler<E extends Env, P extends Params 
         else this.log = new Loganite(path, 'fatal');
     }
 
+    /**
+     * Define CORS configuration for this route handler.
+     * Override this method to enable CORS with dynamic configuration based on the request.
+     * The same config is automatically applied to both OPTIONS preflight and actual responses.
+     *
+     * Return undefined to use the router's default CORS config (if any).
+     *
+     * @example
+     * ```typescript
+     * class MyHandler extends DurableObjectRouteHandler<Env> {
+     *   cors(request: Request): CorsConfig | undefined {
+     *     const origin = request.headers.get('Origin');
+     *     if (origin?.endsWith('.myapp.com')) {
+     *       return { origins: origin, credentials: true };
+     *     }
+     *     return undefined;
+     *   }
+     *
+     *   async get() {
+     *     return { data: 'hello' };
+     *   }
+     * }
+     * ```
+     */
+    cors(request: Request, params?: P): CorsConfig | undefined {
+        return undefined;
+    }
+
     // HTTP method handlers that can be implemented by subclasses
     async get(request: Request, params?: P): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
@@ -610,6 +781,19 @@ export abstract class DurableObjectRouteHandler<E extends Env, P extends Params 
     async patch(request: Request, params?: P): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
+}
+
+/**
+ * Options for DurableObjectRouter constructor
+ *
+ * @category Types
+ */
+export interface DurableObjectRouterOptions {
+    /**
+     * CORS configuration for the router.
+     * If not provided, default CORS headers (without Access-Control-Allow-Origin) are used.
+     */
+    cors?: CorsConfig;
 }
 
 /**
@@ -635,6 +819,17 @@ export abstract class DurableObjectRouteHandler<E extends Env, P extends Params 
  *   }
  * }
  * ```
+ *
+ * @example
+ * ```typescript
+ * // With CORS configuration
+ * const router = new DurableObjectRouter(ctx, env, 'counter', {
+ *   cors: {
+ *     origins: ['https://myapp.com'],
+ *     credentials: true,
+ *   }
+ * });
+ * ```
  */
 export class DurableObjectRouter<E extends Env> {
     /** Logger instance */
@@ -647,6 +842,8 @@ export class DurableObjectRouter<E extends Env> {
     ctx: DurableObjectState;
     /** Environment bindings */
     env: E;
+    /** CORS configuration */
+    corsConfig?: CorsConfig;
     private is_built: boolean = false;
 
     /**
@@ -654,23 +851,21 @@ export class DurableObjectRouter<E extends Env> {
      * @param ctx - Durable Object state
      * @param env - Environment bindings
      * @param name - Router name for logging
+     * @param options - Router options including CORS configuration
      * @param args - Additional arguments passed to itty-router
      */
-    constructor(ctx: DurableObjectState, env: E, name: string, ...args: Parameters<typeof Router>) {
+    constructor(
+        ctx: DurableObjectState,
+        env: E,
+        name: string,
+        options?: DurableObjectRouterOptions,
+        ...args: Parameters<typeof Router>
+    ) {
         this.name = name;
         this.ctx = ctx;
         this.env = env;
+        this.corsConfig = options?.cors;
         this.router = Router(...args);
-
-        // Handle CORS preflight requests
-        this.router.options(
-            '*',
-            () =>
-                new Response(null, {
-                    status: 204,
-                    headers: corsHeaders,
-                })
-        );
         this.log = new Loganite(name, 'fatal');
     }
 
@@ -678,32 +873,32 @@ export class DurableObjectRouter<E extends Env> {
         path: string,
         middleware: DurableObjectMiddleware<P>
     ): DurableObjectRouter<E> {
-        this.router.all(path, handleDurableObjectMiddleware(middleware));
+        this.router.all(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
         return this;
     }
 
     get(path: string, middleware: DurableObjectMiddleware): DurableObjectRouter<E> {
-        this.router.get(path, handleDurableObjectMiddleware(middleware));
+        this.router.get(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
         return this;
     }
 
     post(path: string, middleware: DurableObjectMiddleware): DurableObjectRouter<E> {
-        this.router.post(path, handleDurableObjectMiddleware(middleware));
+        this.router.post(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
         return this;
     }
 
     put(path: string, middleware: DurableObjectMiddleware): DurableObjectRouter<E> {
-        this.router.put(path, handleDurableObjectMiddleware(middleware));
+        this.router.put(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
         return this;
     }
 
     delete(path: string, middleware: DurableObjectMiddleware): DurableObjectRouter<E> {
-        this.router.delete(path, handleDurableObjectMiddleware(middleware));
+        this.router.delete(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
         return this;
     }
 
     patch(path: string, middleware: DurableObjectMiddleware): DurableObjectRouter<E> {
-        this.router.patch(path, handleDurableObjectMiddleware(middleware));
+        this.router.patch(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
         return this;
     }
 
@@ -717,27 +912,52 @@ export class DurableObjectRouter<E extends Env> {
             log: this.log,
         });
 
-        // Register each HTTP method with the router, passing the handler's response context
+        // Create a function to get CORS config dynamically from the handler
+        const getCorsConfig = (request: Request, params?: Record<string, string>) =>
+            handler.cors(request, params);
+
+        // Register OPTIONS handler with consistent CORS headers (calls handler.cors())
+        this.router.options(path, (request: Request) => {
+            const requestOrigin = request.headers.get('Origin');
+            const handlerCorsConfig = handler.cors(request, request.params);
+            const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
+            const headersToUse = effectiveCorsConfig
+                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
+                : corsHeaders;
+
+            return new Response(null, {
+                status: 204,
+                headers: headersToUse,
+            });
+        });
+
+        // Register each HTTP method with the router, passing the dynamic CORS getter
         this.router.post(
             path,
             handleDurableObjectRoute(
                 (request: Request, params?: Record<string, string>) =>
                     handler.post(request, params),
-                handler.response
+                handler.response,
+                getCorsConfig,
+                this.corsConfig
             )
         );
         this.router.get(
             path,
             handleDurableObjectRoute(
                 (request: Request, params?: Record<string, string>) => handler.get(request, params),
-                handler.response
+                handler.response,
+                getCorsConfig,
+                this.corsConfig
             )
         );
         this.router.put(
             path,
             handleDurableObjectRoute(
                 (request: Request, params?: Record<string, string>) => handler.put(request, params),
-                handler.response
+                handler.response,
+                getCorsConfig,
+                this.corsConfig
             )
         );
         this.router.delete(
@@ -745,7 +965,9 @@ export class DurableObjectRouter<E extends Env> {
             handleDurableObjectRoute(
                 (request: Request, params?: Record<string, string>) =>
                     handler.delete(request, params),
-                handler.response
+                handler.response,
+                getCorsConfig,
+                this.corsConfig
             )
         );
         this.router.patch(
@@ -753,7 +975,9 @@ export class DurableObjectRouter<E extends Env> {
             handleDurableObjectRoute(
                 (request: Request, params?: Record<string, string>) =>
                     handler.patch(request, params),
-                handler.response
+                handler.response,
+                getCorsConfig,
+                this.corsConfig
             )
         );
 
@@ -765,18 +989,35 @@ export class DurableObjectRouter<E extends Env> {
             return this.router;
         }
 
+        // Handle CORS preflight requests (catch-all for routes without custom OPTIONS handlers)
+        // Registered here so specific route OPTIONS handlers take precedence
+        this.router.options('*', (request: Request) => {
+            const requestOrigin = request.headers.get('Origin');
+            const headersToUse = this.corsConfig
+                ? buildCorsHeaders(this.corsConfig, requestOrigin)
+                : corsHeaders;
+
+            return new Response(null, {
+                status: 204,
+                headers: headersToUse,
+            });
+        });
+
         // Handle 404 - Route not found
-        this.router.all(
-            '*',
-            () =>
-                new Response(JSON.stringify({ error: 'Not found' }), {
-                    status: 404,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...corsHeaders,
-                    },
-                })
-        );
+        this.router.all('*', (request: Request) => {
+            const requestOrigin = request.headers.get('Origin');
+            const corsHeadersToApply = this.corsConfig
+                ? buildCorsHeaders(this.corsConfig, requestOrigin)
+                : corsHeaders;
+
+            return new Response(JSON.stringify({ error: 'Not found' }), {
+                status: 404,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...corsHeadersToApply,
+                },
+            });
+        });
 
         this.is_built = true;
 
