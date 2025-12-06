@@ -4,10 +4,10 @@
  *
  * @example
  * ```typescript
- * import { WorkerRouter, RouteHandler } from '@whi/cf-routing';
+ * import { WorkerRouter, RouteHandler, Context } from '@whi/cf-routing';
  *
  * class HealthHandler extends RouteHandler {
- *   async get() {
+ *   async get(ctx: Context) {
  *     return { status: 'healthy' };
  *   }
  * }
@@ -20,6 +20,7 @@
 
 /// <reference types="@cloudflare/workers-types" />
 
+export * from './context.js';
 export * from './cors.js';
 export * from './router.js';
 export * from './response-context.js';

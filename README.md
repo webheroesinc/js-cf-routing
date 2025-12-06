@@ -8,12 +8,12 @@ Class-based routing framework for Cloudflare Workers and Durable Objects built o
 ## Features
 
 - **Class-based Route Handlers** - Organize routes using ES6 classes
+- **Context Object** - Single `ctx` argument with request, env, params, state, and response
+- **Middleware with next()** - Koa/Hono-style middleware for pre/post processing
 - **Built-in Error Handling** - Automatic JSON error responses with proper status codes
-- **CORS Support** - Pre-configured CORS headers for all responses
+- **CORS Support** - Configurable CORS at router and handler level
 - **Type Safety** - Full TypeScript support with generic types
 - **Durable Objects** - First-class support for Durable Object routing
-- **Middleware** - Easy middleware registration with error handling
-- **Method Chaining** - Fluent API for route registration
 
 ## Installation
 
@@ -26,10 +26,10 @@ npm install @whi/cf-routing
 ### Worker Router
 
 ```typescript
-import { WorkerRouter, RouteHandler } from '@whi/cf-routing';
+import { WorkerRouter, RouteHandler, Context } from '@whi/cf-routing';
 
 class HealthHandler extends RouteHandler {
-    async get() {
+    async get(ctx: Context) {
         return { status: 'healthy' };
     }
 }
@@ -48,23 +48,23 @@ export default {
 ### Durable Object Router
 
 ```typescript
-import { DurableObjectRouter, DurableObjectRouteHandler } from '@whi/cf-routing';
+import { DurableObjectRouter, DurableObjectRouteHandler, DurableObjectContext } from '@whi/cf-routing';
 
 class CounterHandler extends DurableObjectRouteHandler {
-    async get() {
-        return { count: await this.ctx.storage.get('count') || 0 };
+    async get(ctx: DurableObjectContext) {
+        return { count: await ctx.doState.storage.get('count') || 0 };
     }
 
-    async post() {
-        const count = await this.ctx.storage.get('count') || 0;
-        await this.ctx.storage.put('count', count + 1);
+    async post(ctx: DurableObjectContext) {
+        const count = await ctx.doState.storage.get('count') || 0;
+        await ctx.doState.storage.put('count', count + 1);
         return { count: count + 1 };
     }
 }
 
 export class Counter {
-    constructor(ctx, env) {
-        this.router = new DurableObjectRouter(ctx, env, 'counter')
+    constructor(state, env) {
+        this.router = new DurableObjectRouter(state, env, 'counter')
             .defineRouteHandler('/count', CounterHandler);
     }
 
@@ -78,22 +78,31 @@ export class Counter {
 
 ### Route Handlers
 
-Create route handlers by extending the base classes and implementing HTTP methods:
+Create route handlers by extending the base classes. All handler methods receive a `ctx` object:
 
 ```typescript
 class UserHandler extends RouteHandler<Env, { id: string }> {
-    async get(request, env, params) {
-        return { userId: params.id };
+    async get(ctx: Context<Env, { id: string }>) {
+        return { userId: ctx.params.id };
     }
 
-    async post(request, env, params) {
-        const body = await request.json();
-        return { userId: params.id, created: true };
+    async post(ctx: Context<Env, { id: string }>) {
+        const body = await ctx.request.json();
+        return { userId: ctx.params.id, created: true };
     }
 }
 
 router.defineRouteHandler('/users/:id', UserHandler);
 ```
+
+The `ctx` object contains:
+- `ctx.request` - The incoming Request
+- `ctx.env` - Environment bindings
+- `ctx.params` - Route parameters (e.g., `{ id: '123' }`)
+- `ctx.state` - Shared state for middleware communication
+- `ctx.response` - Response customization (status, headers)
+- `ctx.log` - Logger instance
+- `ctx.doState` - Durable Object storage (DurableObjectContext only)
 
 ### Automatic Error Handling
 
@@ -102,8 +111,8 @@ Throw `HttpError` for proper HTTP status codes:
 ```typescript
 import { HttpError } from '@whi/cf-routing';
 
-async get(request, env, params) {
-    if (!params?.id) {
+async get(ctx: Context<Env, { id: string }>) {
+    if (!ctx.params?.id) {
         throw new HttpError(400, 'ID required');
     }
     // Errors automatically become JSON responses
@@ -112,12 +121,12 @@ async get(request, env, params) {
 
 ### Response Customization
 
-Customize status codes and headers via `this.response`:
+Customize status codes and headers via `ctx.response`:
 
 ```typescript
-async post(request, env, params) {
-    this.response.status = 201;
-    this.response.headers.set('Set-Cookie', 'session=abc123');
+async post(ctx: Context) {
+    ctx.response.status = 201;
+    ctx.response.headers.set('Set-Cookie', 'session=abc123');
     return { created: true };
 }
 ```
@@ -125,11 +134,39 @@ async post(request, env, params) {
 Or return a `Response` directly for full control:
 
 ```typescript
-async get() {
+async get(ctx: Context) {
     return new Response('<html>...</html>', {
         headers: { 'Content-Type': 'text/html' }
     });
 }
+```
+
+### Middleware with next()
+
+Middleware uses the Koa/Hono-style `next()` pattern for pre/post processing:
+
+```typescript
+import { Middleware } from '@whi/cf-routing';
+
+const authMiddleware: Middleware<Env> = async (ctx, next) => {
+    // Pre-processing
+    const token = ctx.request.headers.get('Authorization');
+    if (!token) {
+        throw new HttpError(401, 'Unauthorized');
+    }
+    ctx.state.userId = validateToken(token);
+
+    // Call next middleware/handler
+    const response = await next();
+
+    // Post-processing (optional)
+    return response;
+};
+
+router
+    .use(authMiddleware)                    // Global middleware
+    .use('/api/*', rateLimitMiddleware)     // Path-specific middleware
+    .defineRouteHandler('/api/users', UserHandler);
 ```
 
 ### CORS Support
@@ -144,8 +181,8 @@ const router = new WorkerRouter<Env>('api', {
 
 // Per-handler dynamic CORS
 class ApiHandler extends RouteHandler<Env> {
-    cors(request: Request, env: Env) {
-        const origin = request.headers.get('Origin');
+    cors(ctx: Context<Env>) {
+        const origin = ctx.request.headers.get('Origin');
         // Allow specific subdomains
         if (origin?.endsWith('.myapp.com')) {
             return { origins: origin, credentials: true };
@@ -153,23 +190,13 @@ class ApiHandler extends RouteHandler<Env> {
         return undefined; // Use router default
     }
 
-    async get() {
+    async get(ctx: Context<Env>) {
         return { data: 'hello' };
     }
 }
 ```
 
 CORS headers are automatically consistent between OPTIONS preflight and actual responses.
-
-### Middleware Support
-
-Chain middleware for authentication, logging, etc:
-
-```typescript
-router
-    .all('/api/*', authMiddleware)
-    .defineRouteHandler('/api/users', UserHandler);
-```
 
 ## Documentation
 

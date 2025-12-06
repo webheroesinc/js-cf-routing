@@ -12,8 +12,9 @@ export default defineConfig({
                 'tests/',
                 '*.config.ts',
                 '*.config.js',
+                'src/context.ts', // Types only, no runtime code
             ],
-            include: ['src/**/*.ts', 'lib/**/*.js'],
+            include: ['src/**/*.ts'],
             thresholds: {
                 lines: 80,
                 functions: 80,

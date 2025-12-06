@@ -56,7 +56,9 @@ export async function setupDurableObjectRouter(): Promise<DurableObjectFixture> 
         modulesRoot: path.join(__dirname, '..'),
     });
 
-    const COUNTER = (await mf.getDurableObjectNamespace('COUNTER')) as unknown as DurableObjectNamespace;
+    const COUNTER = (await mf.getDurableObjectNamespace(
+        'COUNTER'
+    )) as unknown as DurableObjectNamespace;
 
     return {
         mf,

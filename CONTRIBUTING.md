@@ -25,17 +25,19 @@ npm run test:coverage
 
 ```
 .
-├── src/                # Source code
-│   ├── index.ts       # Main exports
-│   ├── router.ts      # Router implementations
-│   └── cors.ts        # CORS utilities
-├── lib/               # Compiled JavaScript (generated)
+├── src/                    # Source code
+│   ├── index.ts           # Main exports
+│   ├── router.ts          # Router implementations
+│   ├── context.ts         # Context and Middleware types
+│   ├── response-context.ts # ResponseContext class
+│   └── cors.ts            # CORS utilities
+├── lib/                   # Compiled JavaScript (generated)
 ├── tests/
-│   ├── unit/          # Unit tests
-│   ├── integration/   # Integration tests
-│   ├── fixtures/      # Test worker implementations
-│   └── setup.ts       # Test utilities
-└── Makefile           # Build automation
+│   ├── unit/              # Unit tests
+│   ├── integration/       # Integration tests
+│   ├── fixtures/          # Test worker implementations
+│   └── setup.ts           # Test utilities
+└── Makefile               # Build automation
 ```
 
 ## Testing
@@ -87,12 +89,9 @@ npx wrangler deploy --config tests/fixtures/wrangler-worker.toml \
 
 ### Coverage
 
-Coverage shows 0% because:
-- Tests run against bundled code in `tests/fixtures/dist/`
-- V8 coverage can't map through bundles back to `src/` files
-- This is expected with integration testing
+Run `npm run test:coverage` to see code coverage. The project maintains >80% coverage thresholds.
 
-**However**, the tests thoroughly validate all functionality by testing the library exactly as consumers will use it.
+Unit tests import directly from `src/` to enable accurate coverage measurement.
 
 ## Code Style
 
@@ -185,13 +184,13 @@ import { WorkerRouter } from '../../lib/index.js';
 import { HttpError } from '@whi/http-errors';
 ```
 
-### Tests pass but coverage is 0%
+### Tests pass but coverage is low
 
-**This is expected.** See "Coverage" section above. The integration tests fully validate functionality.
+Ensure unit tests import from `src/` not `lib/`. Coverage is measured on source files only.
 
 ## Future Test Improvements
 
-While current test coverage is strong (95.98%), here are potential enhancements to better replicate consumer usage patterns:
+Here are potential enhancements to better replicate consumer usage patterns:
 
 ### Test Fixture Enhancements
 - Multi-parameter routes (e.g., `/org/:orgId/user/:userId`)

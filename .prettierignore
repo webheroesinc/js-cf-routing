@@ -1,0 +1,8 @@
+node_modules/
+lib/
+docs/
+coverage/
+tests/fixtures/dist/
+*.md
+*.json
+.claude/

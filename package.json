@@ -25,8 +25,8 @@
     "test:integration": "vitest run tests/integration",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch"
   },
@@ -48,7 +48,7 @@
     "durable-objects"
   ],
   "dependencies": {
-    "@whi/http-errors": "^0.1.1",
+    "@whi/http-errors": "^0.2.0",
     "itty-router": "^5.0.18",
     "loganite": "^0.1.2"
   },

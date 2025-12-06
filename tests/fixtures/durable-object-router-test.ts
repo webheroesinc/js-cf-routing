@@ -3,6 +3,8 @@
 import {
     DurableObjectRouter,
     DurableObjectRouteHandler,
+    DurableObjectContext,
+    DurableObjectMiddleware,
     Env as BaseEnv,
     HttpError,
 } from '../../lib/index.js';
@@ -14,58 +16,58 @@ export interface Env extends BaseEnv {
 
 // Example Durable Object route handler
 class CounterHandler extends DurableObjectRouteHandler<Env> {
-    async get(request: Request): Promise<any> {
-        const count = (await this.ctx.storage.get<number>('count')) || 0;
+    async get(ctx: DurableObjectContext<Env>): Promise<any> {
+        const count = (await ctx.doState.storage.get<number>('count')) || 0;
         return { count };
     }
 
-    async post(request: Request): Promise<any> {
-        const body = await request.json<{ increment?: number }>();
-        const currentCount = (await this.ctx.storage.get<number>('count')) || 0;
+    async post(ctx: DurableObjectContext<Env>): Promise<any> {
+        const body = await ctx.request.json<{ increment?: number }>();
+        const currentCount = (await ctx.doState.storage.get<number>('count')) || 0;
         const newCount = currentCount + (body.increment || 1);
-        await this.ctx.storage.put('count', newCount);
+        await ctx.doState.storage.put('count', newCount);
         return { count: newCount };
     }
 
-    async delete(request: Request): Promise<any> {
-        await this.ctx.storage.delete('count');
+    async delete(ctx: DurableObjectContext<Env>): Promise<any> {
+        await ctx.doState.storage.delete('count');
         return { count: 0, reset: true };
     }
 }
 
 // Example handler with state
 class StateHandler extends DurableObjectRouteHandler<Env, { key: string }> {
-    async get(request: Request, params?: { key: string }): Promise<any> {
-        if (!params?.key) {
+    async get(ctx: DurableObjectContext<Env, { key: string }>): Promise<any> {
+        if (!ctx.params?.key) {
             throw new HttpError(400, 'Key is required');
         }
-        const value = await this.ctx.storage.get<string>(params.key);
-        return { key: params.key, value: value || null };
+        const value = await ctx.doState.storage.get<string>(ctx.params.key);
+        return { key: ctx.params.key, value: value || null };
     }
 
-    async put(request: Request, params?: { key: string }): Promise<any> {
-        if (!params?.key) {
+    async put(ctx: DurableObjectContext<Env, { key: string }>): Promise<any> {
+        if (!ctx.params?.key) {
             throw new HttpError(400, 'Key is required');
         }
-        const body = await request.json<{ value: string }>();
-        await this.ctx.storage.put(params.key, body.value);
-        return { key: params.key, value: body.value, stored: true };
+        const body = await ctx.request.json<{ value: string }>();
+        await ctx.doState.storage.put(ctx.params.key, body.value);
+        return { key: ctx.params.key, value: body.value, stored: true };
     }
 }
 
 // Additional handlers for info and reset
 class InfoHandler extends DurableObjectRouteHandler<Env> {
-    async get(request: Request): Promise<any> {
+    async get(ctx: DurableObjectContext<Env>): Promise<any> {
         return {
-            id: this.ctx.id.toString(),
+            id: ctx.doState.id.toString(),
             name: 'Counter Durable Object',
         };
     }
 }
 
 class ResetHandler extends DurableObjectRouteHandler<Env> {
-    async post(request: Request): Promise<any> {
-        await this.ctx.storage.deleteAll();
+    async post(ctx: DurableObjectContext<Env>): Promise<any> {
+        await ctx.doState.storage.deleteAll();
         return { reset: true };
     }
 }
@@ -74,8 +76,8 @@ class ResetHandler extends DurableObjectRouteHandler<Env> {
 export class Counter implements DurableObject {
     private router: DurableObjectRouter<Env>;
 
-    constructor(ctx: DurableObjectState, env: Env) {
-        this.router = new DurableObjectRouter<Env>(ctx, env, 'counter');
+    constructor(state: DurableObjectState, env: Env) {
+        this.router = new DurableObjectRouter<Env>(state, env, 'counter');
 
         // Register route handlers
         this.router.defineRouteHandler('/count', CounterHandler);

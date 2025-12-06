@@ -10,10 +10,10 @@
  * @example
  * ```typescript
  * class UserHandler extends RouteHandler<Env, { id: string }> {
- *   async get(request: Request, env: Env, params?: { id: string }): Promise<any> {
- *     this.response.status = 201;
- *     this.response.headers.set('Set-Cookie', 'session=abc123');
- *     return { userId: params.id };
+ *   async get(ctx: Context<Env, { id: string }>): Promise<any> {
+ *     ctx.response.status = 201;
+ *     ctx.response.headers.set('Set-Cookie', 'session=abc123');
+ *     return { userId: ctx.params.id };
  *   }
  * }
  * ```

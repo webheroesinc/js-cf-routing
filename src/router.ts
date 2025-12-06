@@ -2,7 +2,11 @@ import { HttpError } from '@whi/http-errors';
 import { Router } from 'itty-router';
 import { corsHeaders, CorsConfig, buildCorsHeaders } from './cors.js';
 import { ResponseContext } from './response-context.js';
+import { Context, Middleware, Params, Env } from './context.js';
 import Loganite from 'loganite';
+
+// Re-export types from context
+export { Context, Middleware, Params, Env };
 
 // Add type definitions for request augmentation
 declare global {
@@ -12,151 +16,119 @@ declare global {
 }
 
 /**
- * Base environment interface for Cloudflare Workers
- * @category Types
+ * Build a Response from handler return value and context settings.
+ *
+ * @param result The return value from a route handler
+ * @param ctx The request context
+ * @param corsConfig Optional CORS configuration
+ * @returns A properly formatted Response
  */
-export interface Env {
-    /** Logging level (e.g., 'debug', 'info', 'warn', 'error', 'fatal') */
-    LOG_LEVEL: string;
+export function buildResponse<E extends Env, P extends Params, S>(
+    result: any,
+    ctx: Context<E, P, S>,
+    corsConfig?: CorsConfig
+): Response {
+    // If handler returns a Response directly, use it as-is
+    if (result instanceof Response) {
+        return result;
+    }
+
+    // Get CORS headers
+    const requestOrigin = ctx.request.headers.get('Origin');
+    const corsHeadersToApply = corsConfig
+        ? buildCorsHeaders(corsConfig, requestOrigin)
+        : corsHeaders;
+
+    // Build response using context settings merged with defaults
+    const headers = new Headers({
+        'Content-Type': 'application/json',
+        ...corsHeadersToApply,
+    });
+
+    // Merge in any custom headers from the context (overrides defaults)
+    ctx.response.headers.forEach((value, key) => {
+        headers.set(key, value);
+    });
+
+    return new Response(JSON.stringify(result), {
+        status: ctx.response.status,
+        statusText: ctx.response.statusText,
+        headers,
+    });
 }
 
 /**
- * Wrapper function to handle JSON responses and errors for route handlers
+ * Build an error Response from an error, preserving HttpError details and headers.
  *
- * Supports three return patterns:
- * 1. Return a Response object directly for full control
- * 2. Modify this.response (ResponseContext) and return data for the body
- * 3. Return plain data (current behavior - JSON serialized with defaults)
- *
- * @param handler The route handler function
- * @param responseContext Optional ResponseContext for customizing response properties
- * @param getCorsConfig Function to get CORS config dynamically from the handler
- * @returns A wrapped handler function that handles JSON responses and errors
+ * @param error The error that was thrown
+ * @param ctx The request context
+ * @param corsConfig Optional CORS configuration
+ * @returns An error Response
  */
-export const handleRoute = <E extends Env>(
-    worker_router: WorkerRouter<E>,
-    handler: (request: Request, env: E, params?: Record<string, string>) => Promise<any>,
-    responseContext?: ResponseContext,
-    getCorsConfig?: (request: Request, env: E, params?: Record<string, string>) => CorsConfig | undefined
-) => {
-    return async (request: Request, env: E) => {
-        try {
-            if (env.LOG_LEVEL) worker_router.log.setLevel(env.LOG_LEVEL);
-            worker_router.log.trace(`Incoming request %s '%s'`, request.method, request.url);
+export function buildErrorResponse<E extends Env, P extends Params, S>(
+    error: unknown,
+    ctx: Context<E, P, S>,
+    corsConfig?: CorsConfig
+): Response {
+    ctx.log.error(`Error: ${error}`);
 
-            // Reset context before each request if provided
-            if (responseContext) {
-                responseContext.reset();
-            }
+    // Get CORS headers
+    const requestOrigin = ctx.request.headers.get('Origin');
+    const corsHeadersToApply = corsConfig
+        ? buildCorsHeaders(corsConfig, requestOrigin)
+        : corsHeaders;
 
-            const result = await handler(request, env, request.params);
+    if (error instanceof HttpError) {
+        // Use HttpError.toResponse() to preserve details and headers
+        const response = error.toResponse();
 
-            // If handler returns a Response directly, use it as-is
-            if (result instanceof Response) {
-                return result;
-            }
+        // Create new headers merging CORS with error's headers
+        const headers = new Headers({
+            ...corsHeadersToApply,
+        });
+        response.headers.forEach((value, key) => {
+            headers.set(key, value);
+        });
 
-            // Get CORS headers: handler.cors() > router.corsConfig > defaults
-            const requestOrigin = request.headers.get('Origin');
-            const handlerCorsConfig = getCorsConfig?.(request, env, request.params);
-            const effectiveCorsConfig = handlerCorsConfig ?? worker_router.corsConfig;
-            const corsHeadersToApply = effectiveCorsConfig
-                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
-                : corsHeaders;
+        return new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+        });
+    }
 
-            // Build response using context settings (if provided) merged with defaults
-            const headers = new Headers({
-                'Content-Type': 'application/json',
-                ...corsHeadersToApply,
-            });
-
-            // Merge in any custom headers from the context (overrides defaults)
-            if (responseContext) {
-                responseContext.headers.forEach((value, key) => {
-                    headers.set(key, value);
-                });
-            }
-
-            return new Response(JSON.stringify(result), {
-                status: responseContext?.status ?? 200,
-                statusText: responseContext?.statusText ?? 'OK',
-                headers,
-            });
-        } catch (error) {
-            worker_router.log.error(`Error in route handler: ${error}`);
-            const status = error instanceof HttpError ? error.status : 500;
-            const message = error instanceof HttpError ? error.message : 'Internal Server Error';
-
-            // Get CORS headers: handler.cors() > router.corsConfig > defaults
-            const requestOrigin = request.headers.get('Origin');
-            const handlerCorsConfig = getCorsConfig?.(request, env, request.params);
-            const effectiveCorsConfig = handlerCorsConfig ?? worker_router.corsConfig;
-            const corsHeadersToApply = effectiveCorsConfig
-                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
-                : corsHeaders;
-
-            return new Response(JSON.stringify({ error: message }), {
-                status,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...corsHeadersToApply,
-                },
-            });
-        }
-    };
-};
+    // Unknown error - return 500
+    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+        status: 500,
+        headers: {
+            'Content-Type': 'application/json',
+            ...corsHeadersToApply,
+        },
+    });
+}
 
 /**
- * Route parameters extracted from URL path
- * @category Types
+ * Creates a Context object for a request.
+ *
+ * @param request The incoming request
+ * @param env Environment bindings
+ * @param params Route parameters
+ * @param log Logger instance
+ * @returns A fresh Context object
  */
-export type Params = Record<string, string>;
-
-/**
- * Middleware function type for WorkerRouter
- * @typeParam P - Route parameters type
- * @category Types
- */
-export type Middleware<P extends Params = Params> = (
+export function createContext<E extends Env, P extends Params, S = Record<string, any>>(
     request: Request,
-    env: any,
-    params: P
-) => Promise<void> | void;
-
-/**
- * Wrapper function for middleware to handle errors consistently
- *
- * @param middleware The middleware function
- * @returns A wrapped middleware function that handles errors
- */
-export function handleMiddleware<P extends Params = Params>(
-    worker_router: WorkerRouter<any>,
-    middleware: Middleware<P>
-) {
-    return async (request: Request, env: any) => {
-        try {
-            if (env.LOG_LEVEL) worker_router.log.setLevel(env.LOG_LEVEL);
-            await middleware(request, env, request.params as P);
-            return null; // Continue to next middleware/handler
-        } catch (error) {
-            worker_router.log.error(`Error in middleware: ${error}`);
-            const status = error instanceof HttpError ? error.status : 500;
-            const message = error instanceof HttpError ? error.message : 'Internal Server Error';
-
-            // Get CORS headers based on config
-            const requestOrigin = request.headers.get('Origin');
-            const corsHeadersToApply = worker_router.corsConfig
-                ? buildCorsHeaders(worker_router.corsConfig, requestOrigin)
-                : corsHeaders;
-
-            return new Response(JSON.stringify({ error: message }), {
-                status,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...corsHeadersToApply,
-                },
-            });
-        }
+    env: E,
+    params: P,
+    log: Loganite
+): Context<E, P, S> {
+    return {
+        request,
+        env,
+        params,
+        state: {} as S,
+        response: new ResponseContext(),
+        log,
     };
 }
 
@@ -167,54 +139,45 @@ export function handleMiddleware<P extends Params = Params>(
  * throw a 405 Method Not Allowed error. Override the methods you want to support.
  *
  * Response customization:
- * - Use `this.response` to modify status, statusText, or headers before returning data
+ * - Use `ctx.response` to modify status, statusText, or headers before returning data
  * - Return a `Response` object directly for full control
  * - Return plain data for default JSON serialization
  *
  * @typeParam E - Environment type
  * @typeParam P - Route parameters type
+ * @typeParam S - State type for middleware-set data
  *
  * @category Handlers
  *
  * @example
  * ```typescript
  * class UserHandler extends RouteHandler<Env, { id: string }> {
- *   async get(request, env, params) {
- *     return { userId: params.id };
+ *   async get(ctx) {
+ *     return { userId: ctx.params.id };
  *   }
  *
- *   async post(request, env, params) {
- *     const body = await request.json();
+ *   async post(ctx) {
+ *     const body = await ctx.request.json();
  *     // Customize response
- *     this.response.status = 201;
- *     this.response.headers.set('X-Created-Id', params.id);
- *     return { userId: params.id, created: true, data: body };
+ *     ctx.response.status = 201;
+ *     ctx.response.headers.set('X-Created-Id', ctx.params.id);
+ *     return { userId: ctx.params.id, created: true, data: body };
  *   }
  * }
  *
  * router.defineRouteHandler('/users/:id', UserHandler);
  * ```
  */
-export abstract class RouteHandler<E = any, P extends Params = Params> {
+export abstract class RouteHandler<
+    E extends Env = Env,
+    P extends Params = Params,
+    S = Record<string, any>,
+> {
     protected path: string;
     log: Loganite;
 
-    /**
-     * Response context for customizing the response.
-     * Modify status, statusText, or headers before returning data.
-     *
-     * @example
-     * ```typescript
-     * this.response.status = 201;
-     * this.response.headers.set('Set-Cookie', 'session=abc123');
-     * return { created: true };
-     * ```
-     */
-    response: ResponseContext;
-
     constructor(path: string, options?: { log?: Loganite }) {
         this.path = path;
-        this.response = new ResponseContext();
 
         if (options?.log) this.log = options.log;
         else this.log = new Loganite(path, 'fatal');
@@ -230,42 +193,42 @@ export abstract class RouteHandler<E = any, P extends Params = Params> {
      * @example
      * ```typescript
      * class MyHandler extends RouteHandler<Env> {
-     *   cors(request: Request, env: Env): CorsConfig | undefined {
-     *     const origin = request.headers.get('Origin');
+     *   cors(ctx): CorsConfig | undefined {
+     *     const origin = ctx.request.headers.get('Origin');
      *     if (origin?.endsWith('.myapp.com')) {
      *       return { origins: origin, credentials: true };
      *     }
      *     return undefined; // Use router default or no CORS
      *   }
      *
-     *   async get() {
+     *   async get(ctx) {
      *     return { data: 'hello' };
      *   }
      * }
      * ```
      */
-    cors(request: Request, env: E, params?: P): CorsConfig | undefined {
+    cors(ctx: Context<E, P, S>): CorsConfig | undefined {
         return undefined;
     }
 
     // HTTP method handlers that can be implemented by subclasses
-    async get(request: Request, env: E, params?: P): Promise<any> {
+    async get(ctx: Context<E, P, S>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async post(request: Request, env: E, params?: P): Promise<any> {
+    async post(ctx: Context<E, P, S>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async put(request: Request, env: E, params?: P): Promise<any> {
+    async put(ctx: Context<E, P, S>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async delete(request: Request, env: E, params?: P): Promise<any> {
+    async delete(ctx: Context<E, P, S>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async patch(request: Request, env: E, params?: P): Promise<any> {
+    async patch(ctx: Context<E, P, S>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 }
@@ -284,7 +247,22 @@ export interface WorkerRouterOptions {
 }
 
 /**
- * Router for Cloudflare Workers with class-based handlers and automatic error handling
+ * Internal type for storing middleware with path patterns
+ */
+interface MiddlewareEntry<E extends Env> {
+    path: string | null; // null means global (matches all)
+    method: string | null; // null means all methods
+    middleware: Middleware<E, any, any>;
+}
+
+/**
+ * Router for Cloudflare Workers with class-based handlers and middleware support
+ *
+ * Features:
+ * - Middleware with next() pattern (pre/post processing, short-circuit)
+ * - Context object for sharing state between middleware and handlers
+ * - Automatic error handling with HttpError support
+ * - CORS configuration at router and handler level
  *
  * @typeParam E - Environment type extending base Env interface
  *
@@ -293,8 +271,9 @@ export interface WorkerRouterOptions {
  * @example
  * ```typescript
  * const router = new WorkerRouter<Env>('my-worker')
- *   .defineRouteHandler('/health', HealthHandler)
- *   .get('/ping', async () => ({ message: 'pong' }))
+ *   .use(loggingMiddleware)
+ *   .use('/api/*', authMiddleware)
+ *   .defineRouteHandler('/users/:id', UserHandler)
  *   .build();
  *
  * export default {
@@ -303,27 +282,20 @@ export interface WorkerRouterOptions {
  *   }
  * };
  * ```
- *
- * @example
- * ```typescript
- * // With CORS configuration
- * const router = new WorkerRouter<Env>('my-worker', {
- *   cors: {
- *     origins: ['https://myapp.com', 'https://staging.myapp.com'],
- *     credentials: true,
- *   }
- * });
- * ```
  */
 export class WorkerRouter<E extends Env> {
     /** Router name for logging */
     name: string;
     /** Logger instance */
     log: Loganite;
-    /** Underlying itty-router instance */
+    /** Underlying itty-router instance for path matching */
     router: ReturnType<typeof Router>;
     /** CORS configuration */
     corsConfig?: CorsConfig;
+    /** Registered middlewares */
+    private middlewares: MiddlewareEntry<E>[] = [];
+    /** Whether the router has been built */
+    private isBuilt: boolean = false;
 
     /**
      * Create a new WorkerRouter
@@ -343,51 +315,115 @@ export class WorkerRouter<E extends Env> {
     }
 
     /**
-     * Register middleware for all HTTP methods
-     * @param path - Route path pattern (e.g., '/api/*')
-     * @param middleware - Middleware function
+     * Register global middleware or path-specific middleware
+     *
+     * @param pathOrMiddleware - Path pattern or middleware function
+     * @param middleware - Middleware function (if path provided)
      * @returns This router instance for chaining
+     *
+     * @example
+     * ```typescript
+     * // Global middleware
+     * router.use(loggingMiddleware);
+     *
+     * // Path-specific middleware
+     * router.use('/api/*', authMiddleware);
+     * ```
      */
-    all<P extends Params = Params>(path: string, middleware: Middleware<P>): WorkerRouter<E> {
-        this.router.all(path, handleMiddleware(this, middleware));
+    use<P extends Params = Params, S = Record<string, any>>(
+        pathOrMiddleware: string | Middleware<E, P, S>,
+        middleware?: Middleware<E, P, S>
+    ): WorkerRouter<E> {
+        if (typeof pathOrMiddleware === 'function') {
+            // Global middleware
+            this.middlewares.push({
+                path: null,
+                method: null,
+                middleware: pathOrMiddleware,
+            });
+        } else {
+            // Path-specific middleware
+            if (!middleware) {
+                throw new Error('Middleware function required when path is specified');
+            }
+            this.middlewares.push({
+                path: pathOrMiddleware,
+                method: null,
+                middleware,
+            });
+        }
         return this;
     }
 
     /**
-     * Register middleware for GET requests
-     * @param path - Route path pattern
-     * @param middleware - Middleware function
-     * @returns This router instance for chaining
+     * Register middleware for all HTTP methods on a path
+     * @deprecated Use .use() instead for middleware. This will be removed in a future version.
      */
-    get(path: string, middleware: Middleware): WorkerRouter<E> {
-        this.router.get(path, handleMiddleware(this, middleware));
+    all<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: Middleware<E, P, S>
+    ): WorkerRouter<E> {
+        return this.use(path, middleware);
+    }
+
+    /**
+     * Register middleware for GET requests
+     * @deprecated Use .use() for middleware or .defineRouteHandler() for route handlers.
+     */
+    get<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: Middleware<E, P, S>
+    ): WorkerRouter<E> {
+        this.middlewares.push({ path, method: 'GET', middleware });
         return this;
     }
 
-    post(path: string, middleware: Middleware): WorkerRouter<E> {
-        this.router.post(path, handleMiddleware(this, middleware));
+    /**
+     * @deprecated Use .use() for middleware or .defineRouteHandler() for route handlers.
+     */
+    post<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: Middleware<E, P, S>
+    ): WorkerRouter<E> {
+        this.middlewares.push({ path, method: 'POST', middleware });
         return this;
     }
 
-    put(path: string, middleware: Middleware): WorkerRouter<E> {
-        this.router.put(path, handleMiddleware(this, middleware));
+    /**
+     * @deprecated Use .use() for middleware or .defineRouteHandler() for route handlers.
+     */
+    put<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: Middleware<E, P, S>
+    ): WorkerRouter<E> {
+        this.middlewares.push({ path, method: 'PUT', middleware });
         return this;
     }
 
-    delete(path: string, middleware: Middleware): WorkerRouter<E> {
-        this.router.delete(path, handleMiddleware(this, middleware));
+    /**
+     * @deprecated Use .use() for middleware or .defineRouteHandler() for route handlers.
+     */
+    delete<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: Middleware<E, P, S>
+    ): WorkerRouter<E> {
+        this.middlewares.push({ path, method: 'DELETE', middleware });
         return this;
     }
 
-    patch(path: string, middleware: Middleware): WorkerRouter<E> {
-        this.router.patch(path, handleMiddleware(this, middleware));
+    /**
+     * @deprecated Use .use() for middleware or .defineRouteHandler() for route handlers.
+     */
+    patch<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: Middleware<E, P, S>
+    ): WorkerRouter<E> {
+        this.middlewares.push({ path, method: 'PATCH', middleware });
         return this;
     }
 
     /**
      * Register a class-based route handler for all HTTP methods
-     *
-     * Automatically registers GET, POST, PUT, DELETE, and PATCH methods from the handler class.
      *
      * @param path - Route path pattern (e.g., '/users/:id')
      * @param handler_cls - RouteHandler class to instantiate
@@ -396,30 +432,31 @@ export class WorkerRouter<E extends Env> {
      * @example
      * ```typescript
      * class UserHandler extends RouteHandler<Env, { id: string }> {
-     *   async get(request, env, params) {
-     *     return { userId: params.id };
+     *   async get(ctx) {
+     *     return { userId: ctx.params.id };
      *   }
      * }
      *
      * router.defineRouteHandler('/users/:id', UserHandler);
      * ```
      */
-    defineRouteHandler(
+    defineRouteHandler<P extends Params = Params, S = Record<string, any>>(
         path: string,
-        handler_cls: new (...args: ConstructorParameters<typeof RouteHandler>) => RouteHandler<E>
+        handler_cls: new (
+            ...args: ConstructorParameters<typeof RouteHandler>
+        ) => RouteHandler<E, P, S>
     ): WorkerRouter<E> {
         const handler = new handler_cls(path, {
             log: this.log,
         });
 
-        // Create a function to get CORS config dynamically from the handler
-        const getCorsConfig = (request: Request, env: E, params?: Record<string, string>) =>
-            handler.cors(request, env, params);
-
-        // Register OPTIONS handler with consistent CORS headers (calls handler.cors())
+        // Register OPTIONS handler for CORS preflight
         this.router.options(path, (request: Request, env: E) => {
+            const ctx = createContext<E, P, S>(request, env, (request.params || {}) as P, this.log);
+            if (env.LOG_LEVEL) ctx.log.setLevel(env.LOG_LEVEL);
+
             const requestOrigin = request.headers.get('Origin');
-            const handlerCorsConfig = handler.cors(request, env, request.params);
+            const handlerCorsConfig = handler.cors(ctx);
             const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
             const headersToUse = effectiveCorsConfig
                 ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
@@ -431,65 +468,111 @@ export class WorkerRouter<E extends Env> {
             });
         });
 
-        // Register each HTTP method with the router, passing the dynamic CORS getter
-        this.router.post(
-            path,
-            handleRoute(
-                this,
-                (request: Request, env: E, params?: Record<string, string>) =>
-                    handler.post(request, env, params),
-                handler.response,
-                getCorsConfig
-            )
-        );
-        this.router.get(
-            path,
-            handleRoute(
-                this,
-                (request: Request, env: E, params?: Record<string, string>) =>
-                    handler.get(request, env, params),
-                handler.response,
-                getCorsConfig
-            )
-        );
-        this.router.put(
-            path,
-            handleRoute(
-                this,
-                (request: Request, env: E, params?: Record<string, string>) =>
-                    handler.put(request, env, params),
-                handler.response,
-                getCorsConfig
-            )
-        );
-        this.router.delete(
-            path,
-            handleRoute(
-                this,
-                (request: Request, env: E, params?: Record<string, string>) =>
-                    handler.delete(request, env, params),
-                handler.response,
-                getCorsConfig
-            )
-        );
-        this.router.patch(
-            path,
-            handleRoute(
-                this,
-                (request: Request, env: E, params?: Record<string, string>) =>
-                    handler.patch(request, env, params),
-                handler.response,
-                getCorsConfig
-            )
-        );
+        // Create handler wrapper for each HTTP method
+        const createMethodHandler = (method: 'get' | 'post' | 'put' | 'delete' | 'patch') => {
+            return async (request: Request, env: E) => {
+                const ctx = createContext<E, P, S>(
+                    request,
+                    env,
+                    (request.params || {}) as P,
+                    this.log
+                );
+                if (env.LOG_LEVEL) ctx.log.setLevel(env.LOG_LEVEL);
+                ctx.log.trace(`Incoming request %s '%s'`, request.method, request.url);
+
+                // Get CORS config for this handler
+                const handlerCorsConfig = handler.cors(ctx);
+                const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
+
+                // Build the middleware chain
+                const matchingMiddlewares = this.getMatchingMiddlewares(request, path);
+
+                // Final handler that calls the route handler method
+                const finalHandler: Middleware<E, P, S> = async (ctx) => {
+                    const result = await handler[method](ctx);
+                    return buildResponse(result, ctx, effectiveCorsConfig);
+                };
+
+                // Execute the chain
+                return this.executeChain(
+                    ctx,
+                    [...matchingMiddlewares, finalHandler],
+                    effectiveCorsConfig
+                );
+            };
+        };
+
+        // Register each HTTP method
+        this.router.get(path, createMethodHandler('get'));
+        this.router.post(path, createMethodHandler('post'));
+        this.router.put(path, createMethodHandler('put'));
+        this.router.delete(path, createMethodHandler('delete'));
+        this.router.patch(path, createMethodHandler('patch'));
 
         return this;
     }
 
     /**
+     * Get middlewares that match the current request
+     */
+    private getMatchingMiddlewares(request: Request, path: string): Middleware<E, any, any>[] {
+        const method = request.method;
+        const url = new URL(request.url);
+
+        return this.middlewares
+            .filter((entry) => {
+                // Check method match
+                if (entry.method && entry.method !== method) {
+                    return false;
+                }
+
+                // Check path match
+                if (entry.path === null) {
+                    return true; // Global middleware
+                }
+
+                // Simple path matching (supports wildcards like /api/*)
+                const pattern = entry.path.replace(/\*/g, '.*').replace(/:[^/]+/g, '[^/]+');
+                const regex = new RegExp(`^${pattern}$`);
+                return regex.test(url.pathname);
+            })
+            .map((entry) => entry.middleware);
+    }
+
+    /**
+     * Execute the middleware chain with next() pattern
+     */
+    private async executeChain<P extends Params, S>(
+        ctx: Context<E, P, S>,
+        middlewares: Middleware<E, P, S>[],
+        corsConfig?: CorsConfig
+    ): Promise<Response> {
+        let index = 0;
+
+        const next = async (): Promise<Response> => {
+            if (index >= middlewares.length) {
+                // No more middlewares - this shouldn't happen if chain is built correctly
+                throw new Error('Middleware chain exhausted without returning a response');
+            }
+
+            const middleware = middlewares[index++];
+
+            try {
+                return await middleware(ctx, next);
+            } catch (error) {
+                return buildErrorResponse(error, ctx, corsConfig);
+            }
+        };
+
+        try {
+            return await next();
+        } catch (error) {
+            return buildErrorResponse(error, ctx, corsConfig);
+        }
+    }
+
+    /**
      * Build the router and add 404 handler
-     *
-     * Must be called before using the router in a Worker's fetch handler.
      *
      * @returns The underlying itty-router instance
      *
@@ -507,8 +590,11 @@ export class WorkerRouter<E extends Env> {
      * ```
      */
     build(): WorkerRouter<E>['router'] {
+        if (this.isBuilt) {
+            return this.router;
+        }
+
         // Handle CORS preflight requests (catch-all for routes without custom OPTIONS handlers)
-        // Registered here so specific route OPTIONS handlers take precedence
         this.router.options('*', (request: Request) => {
             const requestOrigin = request.headers.get('Origin');
             const headersToUse = this.corsConfig
@@ -537,139 +623,55 @@ export class WorkerRouter<E extends Env> {
             });
         });
 
+        this.isBuilt = true;
         return this.router;
     }
 }
 
 /**
- * Wrapper function to handle JSON responses and errors for Durable Object route handlers
+ * Context for Durable Object handlers, extends base Context with DO-specific fields
  *
- * Supports three return patterns:
- * 1. Return a Response object directly for full control
- * 2. Modify this.response (ResponseContext) and return data for the body
- * 3. Return plain data (current behavior - JSON serialized with defaults)
- *
- * @param handler The route handler function
- * @param responseContext Optional ResponseContext for customizing response properties
- * @param getCorsConfig Function to get CORS config dynamically, or static config
- * @param routerCorsConfig Router-level CORS config (fallback)
- * @returns A wrapped handler function that handles JSON responses and errors
+ * @category Context
  */
-export const handleDurableObjectRoute = (
-    handler: (request: Request, params?: Record<string, string>) => Promise<any>,
-    responseContext?: ResponseContext,
-    getCorsConfig?: (request: Request, params?: Record<string, string>) => CorsConfig | undefined,
-    routerCorsConfig?: CorsConfig
-) => {
-    return async (request: Request) => {
-        try {
-            // Reset context before each request if provided
-            if (responseContext) {
-                responseContext.reset();
-            }
-
-            const result = await handler(request, request.params);
-
-            // If handler returns a Response directly, use it as-is
-            if (result instanceof Response) {
-                return result;
-            }
-
-            // Get CORS headers: handler.cors() > router.corsConfig > defaults
-            const requestOrigin = request.headers.get('Origin');
-            const handlerCorsConfig = getCorsConfig?.(request, request.params);
-            const effectiveCorsConfig = handlerCorsConfig ?? routerCorsConfig;
-            const corsHeadersToApply = effectiveCorsConfig
-                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
-                : corsHeaders;
-
-            // Build response using context settings (if provided) merged with defaults
-            const headers = new Headers({
-                'Content-Type': 'application/json',
-                ...corsHeadersToApply,
-            });
-
-            // Merge in any custom headers from the context (overrides defaults)
-            if (responseContext) {
-                responseContext.headers.forEach((value, key) => {
-                    headers.set(key, value);
-                });
-            }
-
-            return new Response(JSON.stringify(result), {
-                status: responseContext?.status ?? 200,
-                statusText: responseContext?.statusText ?? 'OK',
-                headers,
-            });
-        } catch (error) {
-            // console.error(`Error in route handler: ${error}`);
-            const status = error instanceof HttpError ? error.status : 500;
-            const message = error instanceof HttpError ? error.message : 'Internal Server Error';
-
-            // Get CORS headers: handler.cors() > router.corsConfig > defaults
-            const requestOrigin = request.headers.get('Origin');
-            const handlerCorsConfig = getCorsConfig?.(request, request.params);
-            const effectiveCorsConfig = handlerCorsConfig ?? routerCorsConfig;
-            const corsHeadersToApply = effectiveCorsConfig
-                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
-                : corsHeaders;
-
-            return new Response(JSON.stringify({ error: message }), {
-                status,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...corsHeadersToApply,
-                },
-            });
-        }
-    };
-};
+export interface DurableObjectContext<E = Env, P = Params, S = Record<string, any>>
+    extends Context<E, P, S> {
+    /** Durable Object state for storage access */
+    doState: DurableObjectState;
+}
 
 /**
- * Middleware function type for DurableObjectRouter
- * @typeParam P - Route parameters type
- * @category Types
+ * Creates a Context object for a Durable Object request.
  */
-export type DurableObjectMiddleware<P extends Params = Params> = (
+export function createDurableObjectContext<
+    E extends Env,
+    P extends Params,
+    S = Record<string, any>,
+>(
     request: Request,
-    params: P
-) => Promise<void> | void;
-
-/**
- * Wrapper function for middleware to handle errors consistently
- *
- * @param middleware The middleware function
- * @param corsConfig Optional CORS configuration
- * @returns A wrapped middleware function that handles errors
- */
-export function handleDurableObjectMiddleware<P extends Params = Params>(
-    middleware: DurableObjectMiddleware<P>,
-    corsConfig?: CorsConfig
-) {
-    return async (request: Request) => {
-        try {
-            await middleware(request, request.params as P);
-            return null; // Continue to next middleware/handler
-        } catch (error) {
-            const status = error instanceof HttpError ? error.status : 500;
-            const message = error instanceof HttpError ? error.message : 'Internal Server Error';
-
-            // Get CORS headers based on config
-            const requestOrigin = request.headers.get('Origin');
-            const corsHeadersToApply = corsConfig
-                ? buildCorsHeaders(corsConfig, requestOrigin)
-                : corsHeaders;
-
-            return new Response(JSON.stringify({ error: message }), {
-                status,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...corsHeadersToApply,
-                },
-            });
-        }
+    env: E,
+    params: P,
+    doState: DurableObjectState,
+    log: Loganite
+): DurableObjectContext<E, P, S> {
+    return {
+        request,
+        env,
+        params,
+        state: {} as S,
+        response: new ResponseContext(),
+        log,
+        doState,
     };
 }
+
+/**
+ * Middleware function type for DurableObjectRouter (uses next() pattern)
+ * @category Types
+ */
+export type DurableObjectMiddleware<E = Env, P = Params, S = Record<string, any>> = (
+    ctx: DurableObjectContext<E, P, S>,
+    next: () => Promise<Response>
+) => Promise<Response>;
 
 /**
  * Base class for route handlers in DurableObjectRouter
@@ -678,56 +680,43 @@ export function handleDurableObjectMiddleware<P extends Params = Params>(
  * By default, all HTTP methods throw a 405 Method Not Allowed error. Override the methods you want to support.
  *
  * Response customization:
- * - Use `this.response` to modify status, statusText, or headers before returning data
+ * - Use `ctx.response` to modify status, statusText, or headers before returning data
  * - Return a `Response` object directly for full control
  * - Return plain data for default JSON serialization
  *
  * @typeParam E - Environment type
  * @typeParam P - Route parameters type
+ * @typeParam S - State type for middleware-set data
  *
  * @category Handlers
  *
  * @example
  * ```typescript
  * class CounterHandler extends DurableObjectRouteHandler<Env> {
- *   async get() {
- *     const count = await this.ctx.storage.get<number>('count') || 0;
+ *   async get(ctx) {
+ *     const count = await ctx.doState.storage.get<number>('count') || 0;
  *     return { count };
  *   }
  *
- *   async post() {
- *     const current = await this.ctx.storage.get<number>('count') || 0;
- *     await this.ctx.storage.put('count', current + 1);
- *     this.response.status = 201;
+ *   async post(ctx) {
+ *     const current = await ctx.doState.storage.get<number>('count') || 0;
+ *     await ctx.doState.storage.put('count', current + 1);
+ *     ctx.response.status = 201;
  *     return { count: current + 1 };
  *   }
  * }
  * ```
  */
-export abstract class DurableObjectRouteHandler<E extends Env, P extends Params = Params> {
+export abstract class DurableObjectRouteHandler<
+    E extends Env = Env,
+    P extends Params = Params,
+    S = Record<string, any>,
+> {
     protected path: string;
-    protected ctx: DurableObjectState;
-    protected env: E;
-    protected log: Loganite;
+    log: Loganite;
 
-    /**
-     * Response context for customizing the response.
-     * Modify status, statusText, or headers before returning data.
-     *
-     * @example
-     * ```typescript
-     * this.response.status = 201;
-     * this.response.headers.set('Set-Cookie', 'session=abc123');
-     * return { created: true };
-     * ```
-     */
-    response: ResponseContext;
-
-    constructor(path: string, ctx: DurableObjectState, env: E, options?: { log?: Loganite }) {
+    constructor(path: string, options?: { log?: Loganite }) {
         this.path = path;
-        this.ctx = ctx;
-        this.env = env;
-        this.response = new ResponseContext();
 
         if (options?.log) this.log = options.log;
         else this.log = new Loganite(path, 'fatal');
@@ -735,50 +724,29 @@ export abstract class DurableObjectRouteHandler<E extends Env, P extends Params 
 
     /**
      * Define CORS configuration for this route handler.
-     * Override this method to enable CORS with dynamic configuration based on the request.
-     * The same config is automatically applied to both OPTIONS preflight and actual responses.
-     *
-     * Return undefined to use the router's default CORS config (if any).
-     *
-     * @example
-     * ```typescript
-     * class MyHandler extends DurableObjectRouteHandler<Env> {
-     *   cors(request: Request): CorsConfig | undefined {
-     *     const origin = request.headers.get('Origin');
-     *     if (origin?.endsWith('.myapp.com')) {
-     *       return { origins: origin, credentials: true };
-     *     }
-     *     return undefined;
-     *   }
-     *
-     *   async get() {
-     *     return { data: 'hello' };
-     *   }
-     * }
-     * ```
      */
-    cors(request: Request, params?: P): CorsConfig | undefined {
+    cors(ctx: DurableObjectContext<E, P, S>): CorsConfig | undefined {
         return undefined;
     }
 
     // HTTP method handlers that can be implemented by subclasses
-    async get(request: Request, params?: P): Promise<any> {
+    async get(ctx: DurableObjectContext<E, P, S>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async post(request: Request, params?: P): Promise<any> {
+    async post(ctx: DurableObjectContext<E, P, S>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async put(request: Request, params?: P): Promise<any> {
+    async put(ctx: DurableObjectContext<E, P, S>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async delete(request: Request, params?: P): Promise<any> {
+    async delete(ctx: DurableObjectContext<E, P, S>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async patch(request: Request, params?: P): Promise<any> {
+    async patch(ctx: DurableObjectContext<E, P, S>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 }
@@ -797,6 +765,15 @@ export interface DurableObjectRouterOptions {
 }
 
 /**
+ * Internal type for storing middleware with path patterns (DurableObject version)
+ */
+interface DurableObjectMiddlewareEntry<E extends Env> {
+    path: string | null;
+    method: string | null;
+    middleware: DurableObjectMiddleware<E, any, any>;
+}
+
+/**
  * Router for Cloudflare Durable Objects with class-based handlers and state management
  *
  * @typeParam E - Environment type extending base Env interface
@@ -810,25 +787,14 @@ export interface DurableObjectRouterOptions {
  *
  *   constructor(ctx: DurableObjectState, env: Env) {
  *     this.router = new DurableObjectRouter(ctx, env, 'counter')
- *       .defineRouteHandler('/count', CounterHandler)
- *       .defineRouteHandler('/reset', ResetHandler);
+ *       .use(loggingMiddleware)
+ *       .defineRouteHandler('/count', CounterHandler);
  *   }
  *
  *   async fetch(request: Request): Promise<Response> {
  *     return this.router.handle(request);
  *   }
  * }
- * ```
- *
- * @example
- * ```typescript
- * // With CORS configuration
- * const router = new DurableObjectRouter(ctx, env, 'counter', {
- *   cors: {
- *     origins: ['https://myapp.com'],
- *     credentials: true,
- *   }
- * });
  * ```
  */
 export class DurableObjectRouter<E extends Env> {
@@ -839,87 +805,132 @@ export class DurableObjectRouter<E extends Env> {
     /** Underlying itty-router instance */
     router: ReturnType<typeof Router>;
     /** Durable Object state */
-    ctx: DurableObjectState;
+    doState: DurableObjectState;
     /** Environment bindings */
     env: E;
     /** CORS configuration */
     corsConfig?: CorsConfig;
-    private is_built: boolean = false;
+    /** Registered middlewares */
+    private middlewares: DurableObjectMiddlewareEntry<E>[] = [];
+    /** Whether the router has been built */
+    private isBuilt: boolean = false;
 
-    /**
-     * Create a new DurableObjectRouter
-     * @param ctx - Durable Object state
-     * @param env - Environment bindings
-     * @param name - Router name for logging
-     * @param options - Router options including CORS configuration
-     * @param args - Additional arguments passed to itty-router
-     */
     constructor(
-        ctx: DurableObjectState,
+        doState: DurableObjectState,
         env: E,
         name: string,
         options?: DurableObjectRouterOptions,
         ...args: Parameters<typeof Router>
     ) {
         this.name = name;
-        this.ctx = ctx;
+        this.doState = doState;
         this.env = env;
         this.corsConfig = options?.cors;
         this.router = Router(...args);
         this.log = new Loganite(name, 'fatal');
     }
 
-    all<P extends Params = Params>(
-        path: string,
-        middleware: DurableObjectMiddleware<P>
+    /**
+     * Register global middleware or path-specific middleware
+     */
+    use<P extends Params = Params, S = Record<string, any>>(
+        pathOrMiddleware: string | DurableObjectMiddleware<E, P, S>,
+        middleware?: DurableObjectMiddleware<E, P, S>
     ): DurableObjectRouter<E> {
-        this.router.all(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
+        if (typeof pathOrMiddleware === 'function') {
+            this.middlewares.push({
+                path: null,
+                method: null,
+                middleware: pathOrMiddleware,
+            });
+        } else {
+            if (!middleware) {
+                throw new Error('Middleware function required when path is specified');
+            }
+            this.middlewares.push({
+                path: pathOrMiddleware,
+                method: null,
+                middleware,
+            });
+        }
         return this;
     }
 
-    get(path: string, middleware: DurableObjectMiddleware): DurableObjectRouter<E> {
-        this.router.get(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
+    /** @deprecated Use .use() instead */
+    all<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: DurableObjectMiddleware<E, P, S>
+    ): DurableObjectRouter<E> {
+        return this.use(path, middleware);
+    }
+
+    /** @deprecated Use .use() or .defineRouteHandler() */
+    get<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: DurableObjectMiddleware<E, P, S>
+    ): DurableObjectRouter<E> {
+        this.middlewares.push({ path, method: 'GET', middleware });
         return this;
     }
 
-    post(path: string, middleware: DurableObjectMiddleware): DurableObjectRouter<E> {
-        this.router.post(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
+    /** @deprecated Use .use() or .defineRouteHandler() */
+    post<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: DurableObjectMiddleware<E, P, S>
+    ): DurableObjectRouter<E> {
+        this.middlewares.push({ path, method: 'POST', middleware });
         return this;
     }
 
-    put(path: string, middleware: DurableObjectMiddleware): DurableObjectRouter<E> {
-        this.router.put(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
+    /** @deprecated Use .use() or .defineRouteHandler() */
+    put<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: DurableObjectMiddleware<E, P, S>
+    ): DurableObjectRouter<E> {
+        this.middlewares.push({ path, method: 'PUT', middleware });
         return this;
     }
 
-    delete(path: string, middleware: DurableObjectMiddleware): DurableObjectRouter<E> {
-        this.router.delete(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
+    /** @deprecated Use .use() or .defineRouteHandler() */
+    delete<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: DurableObjectMiddleware<E, P, S>
+    ): DurableObjectRouter<E> {
+        this.middlewares.push({ path, method: 'DELETE', middleware });
         return this;
     }
 
-    patch(path: string, middleware: DurableObjectMiddleware): DurableObjectRouter<E> {
-        this.router.patch(path, handleDurableObjectMiddleware(middleware, this.corsConfig));
+    /** @deprecated Use .use() or .defineRouteHandler() */
+    patch<P extends Params = Params, S = Record<string, any>>(
+        path: string,
+        middleware: DurableObjectMiddleware<E, P, S>
+    ): DurableObjectRouter<E> {
+        this.middlewares.push({ path, method: 'PATCH', middleware });
         return this;
     }
 
-    defineRouteHandler(
+    defineRouteHandler<P extends Params = Params, S = Record<string, any>>(
         path: string,
         handler_cls: new (
             ...args: ConstructorParameters<typeof DurableObjectRouteHandler>
-        ) => DurableObjectRouteHandler<E>
+        ) => DurableObjectRouteHandler<E, P, S>
     ): DurableObjectRouter<E> {
-        const handler = new handler_cls(path, this.ctx, this.env, {
+        const handler = new handler_cls(path, {
             log: this.log,
         });
 
-        // Create a function to get CORS config dynamically from the handler
-        const getCorsConfig = (request: Request, params?: Record<string, string>) =>
-            handler.cors(request, params);
-
-        // Register OPTIONS handler with consistent CORS headers (calls handler.cors())
+        // Register OPTIONS handler for CORS preflight
         this.router.options(path, (request: Request) => {
+            const ctx = createDurableObjectContext<E, P, S>(
+                request,
+                this.env,
+                (request.params || {}) as P,
+                this.doState,
+                this.log
+            );
+
             const requestOrigin = request.headers.get('Origin');
-            const handlerCorsConfig = handler.cors(request, request.params);
+            const handlerCorsConfig = handler.cors(ctx);
             const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
             const headersToUse = effectiveCorsConfig
                 ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
@@ -931,66 +942,100 @@ export class DurableObjectRouter<E extends Env> {
             });
         });
 
-        // Register each HTTP method with the router, passing the dynamic CORS getter
-        this.router.post(
-            path,
-            handleDurableObjectRoute(
-                (request: Request, params?: Record<string, string>) =>
-                    handler.post(request, params),
-                handler.response,
-                getCorsConfig,
-                this.corsConfig
-            )
-        );
-        this.router.get(
-            path,
-            handleDurableObjectRoute(
-                (request: Request, params?: Record<string, string>) => handler.get(request, params),
-                handler.response,
-                getCorsConfig,
-                this.corsConfig
-            )
-        );
-        this.router.put(
-            path,
-            handleDurableObjectRoute(
-                (request: Request, params?: Record<string, string>) => handler.put(request, params),
-                handler.response,
-                getCorsConfig,
-                this.corsConfig
-            )
-        );
-        this.router.delete(
-            path,
-            handleDurableObjectRoute(
-                (request: Request, params?: Record<string, string>) =>
-                    handler.delete(request, params),
-                handler.response,
-                getCorsConfig,
-                this.corsConfig
-            )
-        );
-        this.router.patch(
-            path,
-            handleDurableObjectRoute(
-                (request: Request, params?: Record<string, string>) =>
-                    handler.patch(request, params),
-                handler.response,
-                getCorsConfig,
-                this.corsConfig
-            )
-        );
+        // Create handler wrapper for each HTTP method
+        const createMethodHandler = (method: 'get' | 'post' | 'put' | 'delete' | 'patch') => {
+            return async (request: Request) => {
+                const ctx = createDurableObjectContext<E, P, S>(
+                    request,
+                    this.env,
+                    (request.params || {}) as P,
+                    this.doState,
+                    this.log
+                );
+                if (this.env.LOG_LEVEL) ctx.log.setLevel(this.env.LOG_LEVEL);
+
+                const handlerCorsConfig = handler.cors(ctx);
+                const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
+
+                const matchingMiddlewares = this.getMatchingMiddlewares(request, path);
+
+                const finalHandler: DurableObjectMiddleware<E, P, S> = async (ctx) => {
+                    const result = await handler[method](ctx);
+                    return buildResponse(result, ctx, effectiveCorsConfig);
+                };
+
+                return this.executeChain(
+                    ctx,
+                    [...matchingMiddlewares, finalHandler],
+                    effectiveCorsConfig
+                );
+            };
+        };
+
+        this.router.get(path, createMethodHandler('get'));
+        this.router.post(path, createMethodHandler('post'));
+        this.router.put(path, createMethodHandler('put'));
+        this.router.delete(path, createMethodHandler('delete'));
+        this.router.patch(path, createMethodHandler('patch'));
 
         return this;
     }
 
+    private getMatchingMiddlewares(
+        request: Request,
+        path: string
+    ): DurableObjectMiddleware<E, any, any>[] {
+        const method = request.method;
+        const url = new URL(request.url);
+
+        return this.middlewares
+            .filter((entry) => {
+                if (entry.method && entry.method !== method) {
+                    return false;
+                }
+                if (entry.path === null) {
+                    return true;
+                }
+                const pattern = entry.path.replace(/\*/g, '.*').replace(/:[^/]+/g, '[^/]+');
+                const regex = new RegExp(`^${pattern}$`);
+                return regex.test(url.pathname);
+            })
+            .map((entry) => entry.middleware);
+    }
+
+    private async executeChain<P extends Params, S>(
+        ctx: DurableObjectContext<E, P, S>,
+        middlewares: DurableObjectMiddleware<E, P, S>[],
+        corsConfig?: CorsConfig
+    ): Promise<Response> {
+        let index = 0;
+
+        const next = async (): Promise<Response> => {
+            if (index >= middlewares.length) {
+                throw new Error('Middleware chain exhausted without returning a response');
+            }
+
+            const middleware = middlewares[index++];
+
+            try {
+                return await middleware(ctx, next);
+            } catch (error) {
+                return buildErrorResponse(error, ctx, corsConfig);
+            }
+        };
+
+        try {
+            return await next();
+        } catch (error) {
+            return buildErrorResponse(error, ctx, corsConfig);
+        }
+    }
+
     build(): DurableObjectRouter<E>['router'] {
-        if (this.is_built) {
+        if (this.isBuilt) {
             return this.router;
         }
 
-        // Handle CORS preflight requests (catch-all for routes without custom OPTIONS handlers)
-        // Registered here so specific route OPTIONS handlers take precedence
         this.router.options('*', (request: Request) => {
             const requestOrigin = request.headers.get('Origin');
             const headersToUse = this.corsConfig
@@ -1003,7 +1048,6 @@ export class DurableObjectRouter<E extends Env> {
             });
         });
 
-        // Handle 404 - Route not found
         this.router.all('*', (request: Request) => {
             const requestOrigin = request.headers.get('Origin');
             const corsHeadersToApply = this.corsConfig
@@ -1019,28 +1063,12 @@ export class DurableObjectRouter<E extends Env> {
             });
         });
 
-        this.is_built = true;
-
+        this.isBuilt = true;
         return this.router;
     }
 
-    /**
-     * Handle a request using the router
-     *
-     * Automatically builds the router if not already built.
-     *
-     * @param request - The request to handle
-     * @returns A response promise
-     *
-     * @example
-     * ```typescript
-     * async fetch(request: Request): Promise<Response> {
-     *   return this.router.handle(request);
-     * }
-     * ```
-     */
     handle(request: Request): Promise<Response> {
-        if (!this.is_built) {
+        if (!this.isBuilt) {
             this.build();
         }
         return this.router.fetch(request) as Promise<Response>;

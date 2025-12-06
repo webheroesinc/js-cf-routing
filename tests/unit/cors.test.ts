@@ -1,12 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { corsHeaders, addCorsHeaders, createCorsHandler, buildCorsHeaders, CorsConfig } from '../../lib/cors.js';
+import {
+    corsHeaders,
+    addCorsHeaders,
+    createCorsHandler,
+    buildCorsHeaders,
+    CorsConfig,
+} from '../../src/cors.js';
 
 describe('CORS Utilities', () => {
     describe('corsHeaders', () => {
         it('should have correct default CORS headers', () => {
             // Access-Control-Allow-Origin is NOT included by default (security fix)
             expect(corsHeaders).not.toHaveProperty('Access-Control-Allow-Origin');
-            expect(corsHeaders).toHaveProperty('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+            expect(corsHeaders).toHaveProperty(
+                'Access-Control-Allow-Methods',
+                'GET, POST, PUT, DELETE, OPTIONS'
+            );
             expect(corsHeaders).toHaveProperty('Access-Control-Allow-Headers');
             expect(corsHeaders).toHaveProperty('Access-Control-Max-Age', '86400');
             // Access-Control-Allow-Credentials is NOT included by default (was incompatible with *)
@@ -85,7 +94,9 @@ describe('CORS Utilities', () => {
 
             // Default headers don't include origin
             expect(modifiedResponse.headers.get('Access-Control-Allow-Origin')).toBeNull();
-            expect(modifiedResponse.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, PUT, DELETE, OPTIONS');
+            expect(modifiedResponse.headers.get('Access-Control-Allow-Methods')).toBe(
+                'GET, POST, PUT, DELETE, OPTIONS'
+            );
             expect(modifiedResponse.headers.get('Content-Type')).toBe('text/plain');
             expect(modifiedResponse.status).toBe(200);
         });
@@ -121,7 +132,9 @@ describe('CORS Utilities', () => {
             const modifiedResponse = addCorsHeaders(originalResponse, { origins: '*' });
 
             // Should preserve the handler's custom origin
-            expect(modifiedResponse.headers.get('Access-Control-Allow-Origin')).toBe('https://myapp.com');
+            expect(modifiedResponse.headers.get('Access-Control-Allow-Origin')).toBe(
+                'https://myapp.com'
+            );
         });
 
         it('should preserve response body', async () => {
