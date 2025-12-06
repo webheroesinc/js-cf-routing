@@ -210,7 +210,7 @@ Consider adding `tests/scenarios/` for common patterns:
 ### Durable Object Advanced Patterns
 - Alarm handling
 - WebSocket support
-- Transaction patterns with `ctx.storage`
+- Transaction patterns with `this.storage`
 
 ### Documentation-Driven Testing
 - Test all README code examples as actual tests

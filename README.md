@@ -52,12 +52,13 @@ import { DurableObjectRouter, DurableObjectRouteHandler, DurableObjectContext } 
 
 class CounterHandler extends DurableObjectRouteHandler {
     async get(ctx: DurableObjectContext) {
-        return { count: await ctx.doState.storage.get('count') || 0 };
+        // Access storage via this.storage (flattened from DurableObjectState)
+        return { count: await this.storage.get('count') || 0 };
     }
 
     async post(ctx: DurableObjectContext) {
-        const count = await ctx.doState.storage.get('count') || 0;
-        await ctx.doState.storage.put('count', count + 1);
+        const count = await this.storage.get('count') || 0;
+        await this.storage.put('count', count + 1);
         return { count: count + 1 };
     }
 }
@@ -97,12 +98,17 @@ router.defineRouteHandler('/users/:id', UserHandler);
 
 The `ctx` object contains:
 - `ctx.request` - The incoming Request
-- `ctx.env` - Environment bindings
+- `ctx.env` - Environment bindings (Worker handlers only)
 - `ctx.params` - Route parameters (e.g., `{ id: '123' }`)
-- `ctx.state` - Shared state for middleware communication
+- `ctx.data` - Shared data for middleware communication
 - `ctx.response` - Response customization (status, headers)
 - `ctx.log` - Logger instance
-- `ctx.doState` - Durable Object storage (DurableObjectContext only)
+
+For **DurableObject handlers**, the handler instance also has:
+- `this.storage` - DurableObjectStorage (flattened from state)
+- `this.id` - DurableObjectId
+- `this.state` - Raw DurableObjectState (for blockConcurrencyWhile, etc.)
+- `this.env` - Environment bindings
 
 ### Automatic Error Handling
 
@@ -154,7 +160,7 @@ const authMiddleware: Middleware<Env> = async (ctx, next) => {
     if (!token) {
         throw new HttpError(401, 'Unauthorized');
     }
-    ctx.state.userId = validateToken(token);
+    ctx.data.userId = validateToken(token);
 
     // Call next middleware/handler
     const response = await next();
@@ -167,6 +173,18 @@ router
     .use(authMiddleware)                    // Global middleware
     .use('/api/*', rateLimitMiddleware)     // Path-specific middleware
     .defineRouteHandler('/api/users', UserHandler);
+```
+
+For **DurableObject middleware**, the signature is `(ctx, state, next)` where `state` is the DurableObjectState:
+
+```typescript
+import { DurableObjectMiddleware } from '@whi/cf-routing';
+
+const sessionMiddleware: DurableObjectMiddleware = async (ctx, state, next) => {
+    const session = await state.storage.get('session');
+    ctx.data.session = session;
+    return next();
+};
 ```
 
 ### CORS Support

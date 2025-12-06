@@ -16,6 +16,16 @@ declare global {
 }
 
 /**
+ * Minimal context interface for building responses.
+ * Both Context and DurableObjectContext satisfy this interface.
+ */
+interface ResponseBuildContext {
+    request: Request;
+    response: ResponseContext;
+    log: Loganite;
+}
+
+/**
  * Build a Response from handler return value and context settings.
  *
  * @param result The return value from a route handler
@@ -23,9 +33,9 @@ declare global {
  * @param corsConfig Optional CORS configuration
  * @returns A properly formatted Response
  */
-export function buildResponse<E extends Env, P extends Params, S>(
+export function buildResponse(
     result: any,
-    ctx: Context<E, P, S>,
+    ctx: ResponseBuildContext,
     corsConfig?: CorsConfig
 ): Response {
     // If handler returns a Response directly, use it as-is
@@ -65,9 +75,9 @@ export function buildResponse<E extends Env, P extends Params, S>(
  * @param corsConfig Optional CORS configuration
  * @returns An error Response
  */
-export function buildErrorResponse<E extends Env, P extends Params, S>(
+export function buildErrorResponse(
     error: unknown,
-    ctx: Context<E, P, S>,
+    ctx: ResponseBuildContext,
     corsConfig?: CorsConfig
 ): Response {
     ctx.log.error(`Error: ${error}`);
@@ -116,17 +126,17 @@ export function buildErrorResponse<E extends Env, P extends Params, S>(
  * @param log Logger instance
  * @returns A fresh Context object
  */
-export function createContext<E extends Env, P extends Params, S = Record<string, any>>(
+export function createContext<E extends Env, P extends Params, D = Record<string, any>>(
     request: Request,
     env: E,
     params: P,
     log: Loganite
-): Context<E, P, S> {
+): Context<E, P, D> {
     return {
         request,
         env,
         params,
-        state: {} as S,
+        data: {} as D,
         response: new ResponseContext(),
         log,
     };
@@ -145,7 +155,7 @@ export function createContext<E extends Env, P extends Params, S = Record<string
  *
  * @typeParam E - Environment type
  * @typeParam P - Route parameters type
- * @typeParam S - State type for middleware-set data
+ * @typeParam D - Data type for middleware-set data
  *
  * @category Handlers
  *
@@ -171,7 +181,7 @@ export function createContext<E extends Env, P extends Params, S = Record<string
 export abstract class RouteHandler<
     E extends Env = Env,
     P extends Params = Params,
-    S = Record<string, any>,
+    D = Record<string, any>,
 > {
     protected path: string;
     log: Loganite;
@@ -207,28 +217,28 @@ export abstract class RouteHandler<
      * }
      * ```
      */
-    cors(ctx: Context<E, P, S>): CorsConfig | undefined {
+    cors(ctx: Context<E, P, D>): CorsConfig | undefined {
         return undefined;
     }
 
     // HTTP method handlers that can be implemented by subclasses
-    async get(ctx: Context<E, P, S>): Promise<any> {
+    async get(ctx: Context<E, P, D>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async post(ctx: Context<E, P, S>): Promise<any> {
+    async post(ctx: Context<E, P, D>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async put(ctx: Context<E, P, S>): Promise<any> {
+    async put(ctx: Context<E, P, D>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async delete(ctx: Context<E, P, S>): Promise<any> {
+    async delete(ctx: Context<E, P, D>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async patch(ctx: Context<E, P, S>): Promise<any> {
+    async patch(ctx: Context<E, P, D>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 }
@@ -252,7 +262,7 @@ export interface WorkerRouterOptions {
 interface MiddlewareEntry<E extends Env> {
     path: string | null; // null means global (matches all)
     method: string | null; // null means all methods
-    middleware: Middleware<E, any, any>;
+    middleware: Middleware<E, Params, any>;
 }
 
 /**
@@ -330,16 +340,16 @@ export class WorkerRouter<E extends Env> {
      * router.use('/api/*', authMiddleware);
      * ```
      */
-    use<P extends Params = Params, S = Record<string, any>>(
-        pathOrMiddleware: string | Middleware<E, P, S>,
-        middleware?: Middleware<E, P, S>
+    use<P extends Params = Params, D = Record<string, any>>(
+        pathOrMiddleware: string | Middleware<E, P, D>,
+        middleware?: Middleware<E, P, D>
     ): WorkerRouter<E> {
         if (typeof pathOrMiddleware === 'function') {
             // Global middleware
             this.middlewares.push({
                 path: null,
                 method: null,
-                middleware: pathOrMiddleware,
+                middleware: pathOrMiddleware as Middleware<E, Params, any>,
             });
         } else {
             // Path-specific middleware
@@ -349,7 +359,7 @@ export class WorkerRouter<E extends Env> {
             this.middlewares.push({
                 path: pathOrMiddleware,
                 method: null,
-                middleware,
+                middleware: middleware as Middleware<E, Params, any>,
             });
         }
         return this;
@@ -359,9 +369,9 @@ export class WorkerRouter<E extends Env> {
      * Register middleware for all HTTP methods on a path
      * @deprecated Use .use() instead for middleware. This will be removed in a future version.
      */
-    all<P extends Params = Params, S = Record<string, any>>(
+    all<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: Middleware<E, P, S>
+        middleware: Middleware<E, P, D>
     ): WorkerRouter<E> {
         return this.use(path, middleware);
     }
@@ -370,55 +380,75 @@ export class WorkerRouter<E extends Env> {
      * Register middleware for GET requests
      * @deprecated Use .use() for middleware or .defineRouteHandler() for route handlers.
      */
-    get<P extends Params = Params, S = Record<string, any>>(
+    get<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: Middleware<E, P, S>
+        middleware: Middleware<E, P, D>
     ): WorkerRouter<E> {
-        this.middlewares.push({ path, method: 'GET', middleware });
+        this.middlewares.push({
+            path,
+            method: 'GET',
+            middleware: middleware as Middleware<E, Params, any>,
+        });
         return this;
     }
 
     /**
      * @deprecated Use .use() for middleware or .defineRouteHandler() for route handlers.
      */
-    post<P extends Params = Params, S = Record<string, any>>(
+    post<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: Middleware<E, P, S>
+        middleware: Middleware<E, P, D>
     ): WorkerRouter<E> {
-        this.middlewares.push({ path, method: 'POST', middleware });
+        this.middlewares.push({
+            path,
+            method: 'POST',
+            middleware: middleware as Middleware<E, Params, any>,
+        });
         return this;
     }
 
     /**
      * @deprecated Use .use() for middleware or .defineRouteHandler() for route handlers.
      */
-    put<P extends Params = Params, S = Record<string, any>>(
+    put<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: Middleware<E, P, S>
+        middleware: Middleware<E, P, D>
     ): WorkerRouter<E> {
-        this.middlewares.push({ path, method: 'PUT', middleware });
+        this.middlewares.push({
+            path,
+            method: 'PUT',
+            middleware: middleware as Middleware<E, Params, any>,
+        });
         return this;
     }
 
     /**
      * @deprecated Use .use() for middleware or .defineRouteHandler() for route handlers.
      */
-    delete<P extends Params = Params, S = Record<string, any>>(
+    delete<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: Middleware<E, P, S>
+        middleware: Middleware<E, P, D>
     ): WorkerRouter<E> {
-        this.middlewares.push({ path, method: 'DELETE', middleware });
+        this.middlewares.push({
+            path,
+            method: 'DELETE',
+            middleware: middleware as Middleware<E, Params, any>,
+        });
         return this;
     }
 
     /**
      * @deprecated Use .use() for middleware or .defineRouteHandler() for route handlers.
      */
-    patch<P extends Params = Params, S = Record<string, any>>(
+    patch<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: Middleware<E, P, S>
+        middleware: Middleware<E, P, D>
     ): WorkerRouter<E> {
-        this.middlewares.push({ path, method: 'PATCH', middleware });
+        this.middlewares.push({
+            path,
+            method: 'PATCH',
+            middleware: middleware as Middleware<E, Params, any>,
+        });
         return this;
     }
 
@@ -440,11 +470,11 @@ export class WorkerRouter<E extends Env> {
      * router.defineRouteHandler('/users/:id', UserHandler);
      * ```
      */
-    defineRouteHandler<P extends Params = Params, S = Record<string, any>>(
+    defineRouteHandler<P extends Params = Params, D = Record<string, any>>(
         path: string,
         handler_cls: new (
             ...args: ConstructorParameters<typeof RouteHandler>
-        ) => RouteHandler<E, P, S>
+        ) => RouteHandler<E, P, D>
     ): WorkerRouter<E> {
         const handler = new handler_cls(path, {
             log: this.log,
@@ -452,7 +482,7 @@ export class WorkerRouter<E extends Env> {
 
         // Register OPTIONS handler for CORS preflight
         this.router.options(path, (request: Request, env: E) => {
-            const ctx = createContext<E, P, S>(request, env, (request.params || {}) as P, this.log);
+            const ctx = createContext<E, P, D>(request, env, (request.params || {}) as P, this.log);
             if (env.LOG_LEVEL) ctx.log.setLevel(env.LOG_LEVEL);
 
             const requestOrigin = request.headers.get('Origin');
@@ -471,7 +501,7 @@ export class WorkerRouter<E extends Env> {
         // Create handler wrapper for each HTTP method
         const createMethodHandler = (method: 'get' | 'post' | 'put' | 'delete' | 'patch') => {
             return async (request: Request, env: E) => {
-                const ctx = createContext<E, P, S>(
+                const ctx = createContext<E, P, D>(
                     request,
                     env,
                     (request.params || {}) as P,
@@ -488,7 +518,7 @@ export class WorkerRouter<E extends Env> {
                 const matchingMiddlewares = this.getMatchingMiddlewares(request, path);
 
                 // Final handler that calls the route handler method
-                const finalHandler: Middleware<E, P, S> = async (ctx) => {
+                const finalHandler: Middleware<E, P, D> = async (ctx) => {
                     const result = await handler[method](ctx);
                     return buildResponse(result, ctx, effectiveCorsConfig);
                 };
@@ -542,9 +572,9 @@ export class WorkerRouter<E extends Env> {
     /**
      * Execute the middleware chain with next() pattern
      */
-    private async executeChain<P extends Params, S>(
-        ctx: Context<E, P, S>,
-        middlewares: Middleware<E, P, S>[],
+    private async executeChain<P extends Params, D>(
+        ctx: Context<E, P, D>,
+        middlewares: Middleware<E, P, D>[],
         corsConfig?: CorsConfig
     ): Promise<Response> {
         let index = 0;
@@ -629,54 +659,82 @@ export class WorkerRouter<E extends Env> {
 }
 
 /**
- * Context for Durable Object handlers, extends base Context with DO-specific fields
+ * Context for Durable Object route handlers.
+ * Contains per-request data only - DO instance data (storage, env) is on the handler's `this`.
+ *
+ * @typeParam P - Route parameters type
+ * @typeParam D - Data type for middleware-set data
  *
  * @category Context
  */
-export interface DurableObjectContext<E = Env, P = Params, S = Record<string, any>>
-    extends Context<E, P, S> {
-    /** Durable Object state for storage access */
-    doState: DurableObjectState;
+export interface DurableObjectContext<P = Params, D = Record<string, any>> {
+    /** Original incoming request */
+    request: Request;
+
+    /** Route parameters from URL (e.g., { id: '123' } from '/items/:id') */
+    params: P;
+
+    /**
+     * Shared data for middleware to pass to handlers.
+     * Use this to store computed data like authenticated user, parsed body, etc.
+     */
+    data: D;
+
+    /** Response customization (status, headers) */
+    response: ResponseContext;
+
+    /** Logger instance */
+    log: Loganite;
 }
 
 /**
  * Creates a Context object for a Durable Object request.
+ * Contains only per-request data - DO instance data is on the handler's `this`.
  */
-export function createDurableObjectContext<
-    E extends Env,
-    P extends Params,
-    S = Record<string, any>,
->(
+export function createDurableObjectContext<P extends Params, D = Record<string, any>>(
     request: Request,
-    env: E,
     params: P,
-    doState: DurableObjectState,
     log: Loganite
-): DurableObjectContext<E, P, S> {
+): DurableObjectContext<P, D> {
     return {
         request,
-        env,
         params,
-        state: {} as S,
+        data: {} as D,
         response: new ResponseContext(),
         log,
-        doState,
     };
 }
 
 /**
- * Middleware function type for DurableObjectRouter (uses next() pattern)
+ * Middleware function type for DurableObjectRouter.
+ * Receives (ctx, state, next) where ctx contains per-request data and state is the DurableObjectState.
+ *
+ * @typeParam P - Route parameters type
+ * @typeParam D - Data type for middleware-set data
+ *
  * @category Types
+ *
+ * @example
+ * ```typescript
+ * const authMiddleware: DurableObjectMiddleware<{ id: string }, { user: User }> =
+ *   async (ctx, state, next) => {
+ *     const session = await state.storage.get(`session:${token}`);
+ *     ctx.data.user = session.user;
+ *     return next();
+ *   };
+ * ```
  */
-export type DurableObjectMiddleware<E = Env, P = Params, S = Record<string, any>> = (
-    ctx: DurableObjectContext<E, P, S>,
+export type DurableObjectMiddleware<P = Params, D = Record<string, any>> = (
+    ctx: DurableObjectContext<P, D>,
+    state: DurableObjectState,
     next: () => Promise<Response>
 ) => Promise<Response>;
 
 /**
  * Base class for route handlers in DurableObjectRouter
  *
- * Extend this class to create handlers for Durable Object routes with access to state and environment.
+ * Extend this class to create handlers for Durable Object routes with access to storage and environment.
+ * The handler instance has access to `this.storage`, `this.id`, `this.state`, and `this.env`.
  * By default, all HTTP methods throw a 405 Method Not Allowed error. Override the methods you want to support.
  *
  * Response customization:
@@ -686,7 +744,7 @@ export type DurableObjectMiddleware<E = Env, P = Params, S = Record<string, any>
  *
  * @typeParam E - Environment type
  * @typeParam P - Route parameters type
- * @typeParam S - State type for middleware-set data
+ * @typeParam D - Data type for middleware-set data
  *
  * @category Handlers
  *
@@ -694,13 +752,13 @@ export type DurableObjectMiddleware<E = Env, P = Params, S = Record<string, any>
  * ```typescript
  * class CounterHandler extends DurableObjectRouteHandler<Env> {
  *   async get(ctx) {
- *     const count = await ctx.doState.storage.get<number>('count') || 0;
+ *     const count = await this.storage.get<number>('count') || 0;
  *     return { count };
  *   }
  *
  *   async post(ctx) {
- *     const current = await ctx.doState.storage.get<number>('count') || 0;
- *     await ctx.doState.storage.put('count', current + 1);
+ *     const current = await this.storage.get<number>('count') || 0;
+ *     await this.storage.put('count', current + 1);
  *     ctx.response.status = 201;
  *     return { count: current + 1 };
  *   }
@@ -710,12 +768,28 @@ export type DurableObjectMiddleware<E = Env, P = Params, S = Record<string, any>
 export abstract class DurableObjectRouteHandler<
     E extends Env = Env,
     P extends Params = Params,
-    S = Record<string, any>,
+    D = Record<string, any>,
 > {
     protected path: string;
     log: Loganite;
 
-    constructor(path: string, options?: { log?: Loganite }) {
+    /** The raw DurableObjectState - use for blockConcurrencyWhile, etc. */
+    state: DurableObjectState;
+
+    /** Flattened storage access from DurableObjectState */
+    storage: DurableObjectStorage;
+
+    /** Flattened ID access from DurableObjectState */
+    id: DurableObjectId;
+
+    /** Environment bindings */
+    env: E;
+
+    constructor(doState: DurableObjectState, env: E, path: string, options?: { log?: Loganite }) {
+        this.state = doState;
+        this.storage = doState.storage;
+        this.id = doState.id;
+        this.env = env;
         this.path = path;
 
         if (options?.log) this.log = options.log;
@@ -725,28 +799,28 @@ export abstract class DurableObjectRouteHandler<
     /**
      * Define CORS configuration for this route handler.
      */
-    cors(ctx: DurableObjectContext<E, P, S>): CorsConfig | undefined {
+    cors(ctx: DurableObjectContext<P, D>): CorsConfig | undefined {
         return undefined;
     }
 
     // HTTP method handlers that can be implemented by subclasses
-    async get(ctx: DurableObjectContext<E, P, S>): Promise<any> {
+    async get(ctx: DurableObjectContext<P, D>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async post(ctx: DurableObjectContext<E, P, S>): Promise<any> {
+    async post(ctx: DurableObjectContext<P, D>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async put(ctx: DurableObjectContext<E, P, S>): Promise<any> {
+    async put(ctx: DurableObjectContext<P, D>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async delete(ctx: DurableObjectContext<E, P, S>): Promise<any> {
+    async delete(ctx: DurableObjectContext<P, D>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 
-    async patch(ctx: DurableObjectContext<E, P, S>): Promise<any> {
+    async patch(ctx: DurableObjectContext<P, D>): Promise<any> {
         throw new HttpError(405, 'Method Not Allowed');
     }
 }
@@ -767,10 +841,10 @@ export interface DurableObjectRouterOptions {
 /**
  * Internal type for storing middleware with path patterns (DurableObject version)
  */
-interface DurableObjectMiddlewareEntry<E extends Env> {
+interface DurableObjectMiddlewareEntry {
     path: string | null;
     method: string | null;
-    middleware: DurableObjectMiddleware<E, any, any>;
+    middleware: DurableObjectMiddleware<Params, any>;
 }
 
 /**
@@ -782,10 +856,11 @@ interface DurableObjectMiddlewareEntry<E extends Env> {
  *
  * @example
  * ```typescript
- * export class Counter implements DurableObject {
+ * export class Counter extends DurableObject {
  *   private router: DurableObjectRouter<Env>;
  *
  *   constructor(ctx: DurableObjectState, env: Env) {
+ *     super(ctx, env);
  *     this.router = new DurableObjectRouter(ctx, env, 'counter')
  *       .use(loggingMiddleware)
  *       .defineRouteHandler('/count', CounterHandler);
@@ -811,7 +886,7 @@ export class DurableObjectRouter<E extends Env> {
     /** CORS configuration */
     corsConfig?: CorsConfig;
     /** Registered middlewares */
-    private middlewares: DurableObjectMiddlewareEntry<E>[] = [];
+    private middlewares: DurableObjectMiddlewareEntry[] = [];
     /** Whether the router has been built */
     private isBuilt: boolean = false;
 
@@ -828,20 +903,21 @@ export class DurableObjectRouter<E extends Env> {
         this.corsConfig = options?.cors;
         this.router = Router(...args);
         this.log = new Loganite(name, 'fatal');
+        if (env.LOG_LEVEL) this.log.setLevel(env.LOG_LEVEL);
     }
 
     /**
      * Register global middleware or path-specific middleware
      */
-    use<P extends Params = Params, S = Record<string, any>>(
-        pathOrMiddleware: string | DurableObjectMiddleware<E, P, S>,
-        middleware?: DurableObjectMiddleware<E, P, S>
+    use<P extends Params = Params, D = Record<string, any>>(
+        pathOrMiddleware: string | DurableObjectMiddleware<P, D>,
+        middleware?: DurableObjectMiddleware<P, D>
     ): DurableObjectRouter<E> {
         if (typeof pathOrMiddleware === 'function') {
             this.middlewares.push({
                 path: null,
                 method: null,
-                middleware: pathOrMiddleware,
+                middleware: pathOrMiddleware as DurableObjectMiddleware<Params, any>,
             });
         } else {
             if (!middleware) {
@@ -850,82 +926,103 @@ export class DurableObjectRouter<E extends Env> {
             this.middlewares.push({
                 path: pathOrMiddleware,
                 method: null,
-                middleware,
+                middleware: middleware as DurableObjectMiddleware<Params, any>,
             });
         }
         return this;
     }
 
     /** @deprecated Use .use() instead */
-    all<P extends Params = Params, S = Record<string, any>>(
+    all<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: DurableObjectMiddleware<E, P, S>
+        middleware: DurableObjectMiddleware<P, D>
     ): DurableObjectRouter<E> {
         return this.use(path, middleware);
     }
 
     /** @deprecated Use .use() or .defineRouteHandler() */
-    get<P extends Params = Params, S = Record<string, any>>(
+    get<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: DurableObjectMiddleware<E, P, S>
+        middleware: DurableObjectMiddleware<P, D>
     ): DurableObjectRouter<E> {
-        this.middlewares.push({ path, method: 'GET', middleware });
+        this.middlewares.push({
+            path,
+            method: 'GET',
+            middleware: middleware as DurableObjectMiddleware<Params, any>,
+        });
         return this;
     }
 
     /** @deprecated Use .use() or .defineRouteHandler() */
-    post<P extends Params = Params, S = Record<string, any>>(
+    post<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: DurableObjectMiddleware<E, P, S>
+        middleware: DurableObjectMiddleware<P, D>
     ): DurableObjectRouter<E> {
-        this.middlewares.push({ path, method: 'POST', middleware });
+        this.middlewares.push({
+            path,
+            method: 'POST',
+            middleware: middleware as DurableObjectMiddleware<Params, any>,
+        });
         return this;
     }
 
     /** @deprecated Use .use() or .defineRouteHandler() */
-    put<P extends Params = Params, S = Record<string, any>>(
+    put<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: DurableObjectMiddleware<E, P, S>
+        middleware: DurableObjectMiddleware<P, D>
     ): DurableObjectRouter<E> {
-        this.middlewares.push({ path, method: 'PUT', middleware });
+        this.middlewares.push({
+            path,
+            method: 'PUT',
+            middleware: middleware as DurableObjectMiddleware<Params, any>,
+        });
         return this;
     }
 
     /** @deprecated Use .use() or .defineRouteHandler() */
-    delete<P extends Params = Params, S = Record<string, any>>(
+    delete<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: DurableObjectMiddleware<E, P, S>
+        middleware: DurableObjectMiddleware<P, D>
     ): DurableObjectRouter<E> {
-        this.middlewares.push({ path, method: 'DELETE', middleware });
+        this.middlewares.push({
+            path,
+            method: 'DELETE',
+            middleware: middleware as DurableObjectMiddleware<Params, any>,
+        });
         return this;
     }
 
     /** @deprecated Use .use() or .defineRouteHandler() */
-    patch<P extends Params = Params, S = Record<string, any>>(
+    patch<P extends Params = Params, D = Record<string, any>>(
         path: string,
-        middleware: DurableObjectMiddleware<E, P, S>
+        middleware: DurableObjectMiddleware<P, D>
     ): DurableObjectRouter<E> {
-        this.middlewares.push({ path, method: 'PATCH', middleware });
+        this.middlewares.push({
+            path,
+            method: 'PATCH',
+            middleware: middleware as DurableObjectMiddleware<Params, any>,
+        });
         return this;
     }
 
-    defineRouteHandler<P extends Params = Params, S = Record<string, any>>(
+    defineRouteHandler<P extends Params = Params, D = Record<string, any>>(
         path: string,
         handler_cls: new (
-            ...args: ConstructorParameters<typeof DurableObjectRouteHandler>
-        ) => DurableObjectRouteHandler<E, P, S>
+            doState: DurableObjectState,
+            env: E,
+            path: string,
+            options?: { log?: Loganite }
+        ) => DurableObjectRouteHandler<E, P, D>
     ): DurableObjectRouter<E> {
-        const handler = new handler_cls(path, {
+        const handler = new handler_cls(this.doState, this.env, path, {
             log: this.log,
         });
 
         // Register OPTIONS handler for CORS preflight
         this.router.options(path, (request: Request) => {
-            const ctx = createDurableObjectContext<E, P, S>(
+            const ctx = createDurableObjectContext<P, D>(
                 request,
-                this.env,
                 (request.params || {}) as P,
-                this.doState,
                 this.log
             );
 
@@ -945,21 +1042,18 @@ export class DurableObjectRouter<E extends Env> {
         // Create handler wrapper for each HTTP method
         const createMethodHandler = (method: 'get' | 'post' | 'put' | 'delete' | 'patch') => {
             return async (request: Request) => {
-                const ctx = createDurableObjectContext<E, P, S>(
+                const ctx = createDurableObjectContext<P, D>(
                     request,
-                    this.env,
                     (request.params || {}) as P,
-                    this.doState,
                     this.log
                 );
-                if (this.env.LOG_LEVEL) ctx.log.setLevel(this.env.LOG_LEVEL);
 
                 const handlerCorsConfig = handler.cors(ctx);
                 const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
 
                 const matchingMiddlewares = this.getMatchingMiddlewares(request, path);
 
-                const finalHandler: DurableObjectMiddleware<E, P, S> = async (ctx) => {
+                const finalHandler: DurableObjectMiddleware<P, D> = async (ctx, state) => {
                     const result = await handler[method](ctx);
                     return buildResponse(result, ctx, effectiveCorsConfig);
                 };
@@ -984,7 +1078,7 @@ export class DurableObjectRouter<E extends Env> {
     private getMatchingMiddlewares(
         request: Request,
         path: string
-    ): DurableObjectMiddleware<E, any, any>[] {
+    ): DurableObjectMiddleware<Params, any>[] {
         const method = request.method;
         const url = new URL(request.url);
 
@@ -1003,9 +1097,9 @@ export class DurableObjectRouter<E extends Env> {
             .map((entry) => entry.middleware);
     }
 
-    private async executeChain<P extends Params, S>(
-        ctx: DurableObjectContext<E, P, S>,
-        middlewares: DurableObjectMiddleware<E, P, S>[],
+    private async executeChain<P extends Params, D>(
+        ctx: DurableObjectContext<P, D>,
+        middlewares: DurableObjectMiddleware<P, D>[],
         corsConfig?: CorsConfig
     ): Promise<Response> {
         let index = 0;
@@ -1018,7 +1112,7 @@ export class DurableObjectRouter<E extends Env> {
             const middleware = middlewares[index++];
 
             try {
-                return await middleware(ctx, next);
+                return await middleware(ctx, this.doState, next);
             } catch (error) {
                 return buildErrorResponse(error, ctx, corsConfig);
             }

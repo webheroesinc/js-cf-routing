@@ -16,31 +16,28 @@ const createMockState = (): DurableObjectState => ({
         equals: () => false,
         name: 'test-name',
     } as DurableObjectId,
-    storage: {} as any,
+    storage: {
+        get: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn(),
+        list: vi.fn(),
+    } as unknown as DurableObjectStorage,
     blockConcurrencyWhile: vi.fn(async (callback: () => Promise<void>) => callback()),
     waitUntil: vi.fn(),
     abort: vi.fn(),
 });
 
-// Helper to create a mock DurableObjectContext
+// Helper to create a mock DurableObjectContext (per-request data only)
 function createMockDOContext<
-    E extends Env = Env,
     P extends Record<string, string> = Record<string, string>,
-    S = Record<string, any>,
->(
-    request: Request,
-    env: E,
-    doState: DurableObjectState,
-    params: P = {} as P
-): DurableObjectContext<E, P, S> {
+    D = Record<string, any>,
+>(request: Request, params: P = {} as P): DurableObjectContext<P, D> {
     return {
         request,
-        env,
         params,
-        state: {} as S,
+        data: {} as D,
         response: new ResponseContext(),
         log: new Loganite('test', 'fatal'),
-        doState,
     };
 }
 
@@ -77,14 +74,14 @@ describe('DurableObjectRouter', () => {
 
     describe('middleware registration with use()', () => {
         it('should register global middleware and return this for chaining', () => {
-            const middleware: DurableObjectMiddleware<Env> = async (ctx, next) => next();
+            const middleware: DurableObjectMiddleware = async (ctx, state, next) => next();
             const result = router.use(middleware);
 
             expect(result).toBe(router);
         });
 
         it('should register path-specific middleware and return this for chaining', () => {
-            const middleware: DurableObjectMiddleware<Env> = async (ctx, next) => next();
+            const middleware: DurableObjectMiddleware = async (ctx, state, next) => next();
             const result = router.use('/test/*', middleware);
 
             expect(result).toBe(router);
@@ -99,50 +96,50 @@ describe('DurableObjectRouter', () => {
 
     describe('deprecated method registration', () => {
         it('should register GET middleware and return this for chaining', () => {
-            const middleware: DurableObjectMiddleware<Env> = async (ctx, next) => next();
+            const middleware: DurableObjectMiddleware = async (ctx, state, next) => next();
             const result = router.get('/test', middleware);
 
             expect(result).toBe(router);
         });
 
         it('should register POST middleware and return this for chaining', () => {
-            const middleware: DurableObjectMiddleware<Env> = async (ctx, next) => next();
+            const middleware: DurableObjectMiddleware = async (ctx, state, next) => next();
             const result = router.post('/test', middleware);
 
             expect(result).toBe(router);
         });
 
         it('should register PUT middleware and return this for chaining', () => {
-            const middleware: DurableObjectMiddleware<Env> = async (ctx, next) => next();
+            const middleware: DurableObjectMiddleware = async (ctx, state, next) => next();
             const result = router.put('/test', middleware);
 
             expect(result).toBe(router);
         });
 
         it('should register DELETE middleware and return this for chaining', () => {
-            const middleware: DurableObjectMiddleware<Env> = async (ctx, next) => next();
+            const middleware: DurableObjectMiddleware = async (ctx, state, next) => next();
             const result = router.delete('/test', middleware);
 
             expect(result).toBe(router);
         });
 
         it('should register PATCH middleware and return this for chaining', () => {
-            const middleware: DurableObjectMiddleware<Env> = async (ctx, next) => next();
+            const middleware: DurableObjectMiddleware = async (ctx, state, next) => next();
             const result = router.patch('/test', middleware);
 
             expect(result).toBe(router);
         });
 
         it('should register ALL middleware and return this for chaining', () => {
-            const middleware: DurableObjectMiddleware<Env> = async (ctx, next) => next();
+            const middleware: DurableObjectMiddleware = async (ctx, state, next) => next();
             const result = router.all('/test', middleware);
 
             expect(result).toBe(router);
         });
 
         it('should allow method chaining', () => {
-            const m1: DurableObjectMiddleware<Env> = async (ctx, next) => next();
-            const m2: DurableObjectMiddleware<Env> = async (ctx, next) => next();
+            const m1: DurableObjectMiddleware = async (ctx, state, next) => next();
+            const m2: DurableObjectMiddleware = async (ctx, state, next) => next();
 
             const result = router.get('/route1', m1).post('/route2', m2);
 
@@ -152,19 +149,19 @@ describe('DurableObjectRouter', () => {
 
     describe('defineRouteHandler', () => {
         class TestDOHandler extends DurableObjectRouteHandler<Env> {
-            async get(ctx: DurableObjectContext<Env>) {
+            async get(ctx: DurableObjectContext) {
                 return { message: 'DO GET handler' };
             }
 
-            async put(ctx: DurableObjectContext<Env>) {
+            async put(ctx: DurableObjectContext) {
                 return { message: 'DO PUT handler' };
             }
 
-            async delete(ctx: DurableObjectContext<Env>) {
+            async delete(ctx: DurableObjectContext) {
                 return { message: 'DO DELETE handler' };
             }
 
-            async patch(ctx: DurableObjectContext<Env>) {
+            async patch(ctx: DurableObjectContext) {
                 return { message: 'DO PATCH handler' };
             }
         }
@@ -176,7 +173,7 @@ describe('DurableObjectRouter', () => {
         });
 
         it('should allow chaining with other registrations', () => {
-            const middleware: DurableObjectMiddleware<Env> = async (ctx, next) => next();
+            const middleware: DurableObjectMiddleware = async (ctx, state, next) => next();
 
             const result = router
                 .use(middleware)
@@ -282,14 +279,14 @@ describe('DurableObjectRouter', () => {
                 }
             }
 
-            const middleware1: DurableObjectMiddleware<Env> = async (ctx, next) => {
+            const middleware1: DurableObjectMiddleware = async (ctx, state, next) => {
                 executionOrder.push('middleware1-before');
                 const response = await next();
                 executionOrder.push('middleware1-after');
                 return response;
             };
 
-            const middleware2: DurableObjectMiddleware<Env> = async (ctx, next) => {
+            const middleware2: DurableObjectMiddleware = async (ctx, state, next) => {
                 executionOrder.push('middleware2-before');
                 const response = await next();
                 executionOrder.push('middleware2-after');
@@ -323,7 +320,7 @@ describe('DurableObjectRouter', () => {
                 }
             }
 
-            const earlyReturnMiddleware: DurableObjectMiddleware<Env> = async (ctx, next) => {
+            const earlyReturnMiddleware: DurableObjectMiddleware = async (ctx, state, next) => {
                 executionOrder.push('early-return');
                 return new Response(JSON.stringify({ blocked: true }), {
                     status: 403,
@@ -344,31 +341,30 @@ describe('DurableObjectRouter', () => {
             expect(executionOrder).toEqual(['early-return']);
         });
 
-        it('should allow middleware to modify ctx.state for downstream handlers', async () => {
-            interface AuthState {
+        it('should allow middleware to modify ctx.data for downstream handlers', async () => {
+            interface AuthData {
                 userId: string;
             }
 
             class TestHandler extends DurableObjectRouteHandler<
                 Env,
                 Record<string, string>,
-                AuthState
+                AuthData
             > {
-                async get(ctx: DurableObjectContext<Env, Record<string, string>, AuthState>) {
-                    return { userId: ctx.state.userId };
+                async get(ctx: DurableObjectContext<Record<string, string>, AuthData>) {
+                    return { userId: ctx.data.userId };
                 }
             }
 
             const authMiddleware: DurableObjectMiddleware<
-                Env,
                 Record<string, string>,
-                AuthState
-            > = async (ctx, next) => {
-                ctx.state.userId = 'user-123';
+                AuthData
+            > = async (ctx, state, next) => {
+                ctx.data.userId = 'user-123';
                 return next();
             };
 
-            router.use(authMiddleware as DurableObjectMiddleware<Env>);
+            router.use(authMiddleware as DurableObjectMiddleware);
             router.defineRouteHandler('/test', TestHandler);
             const builtRouter = router.build();
 
@@ -380,8 +376,34 @@ describe('DurableObjectRouter', () => {
             expect(body).toEqual({ userId: 'user-123' });
         });
 
+        it('should pass state to middleware for storage access', async () => {
+            const storageAccessLog: string[] = [];
+
+            class TestHandler extends DurableObjectRouteHandler<Env> {
+                async get() {
+                    return { success: true };
+                }
+            }
+
+            const storageMiddleware: DurableObjectMiddleware = async (ctx, state, next) => {
+                // Middleware can access storage via state parameter
+                storageAccessLog.push('accessed-storage');
+                expect(state.storage).toBeDefined();
+                return next();
+            };
+
+            router.use(storageMiddleware);
+            router.defineRouteHandler('/test', TestHandler);
+            const builtRouter = router.build();
+
+            const request = new Request('https://example.com/test', { method: 'GET' });
+            await builtRouter.fetch(request);
+
+            expect(storageAccessLog).toEqual(['accessed-storage']);
+        });
+
         it('should handle HttpError thrown in middleware', async () => {
-            const errorMiddleware: DurableObjectMiddleware<Env> = async () => {
+            const errorMiddleware: DurableObjectMiddleware = async () => {
                 throw new HttpError(401, 'Unauthorized');
             };
 
@@ -529,56 +551,42 @@ describe('DurableObjectRouteHandler', () => {
     class TestDOHandler extends DurableObjectRouteHandler<Env> {}
 
     it('should throw 405 for unimplemented GET', async () => {
-        const handler = new TestDOHandler('/test');
-        const ctx = createMockDOContext(
-            new Request('https://example.com/test'),
-            mockEnv,
-            mockState
-        );
+        const handler = new TestDOHandler(mockState, mockEnv, '/test');
+        const ctx = createMockDOContext(new Request('https://example.com/test'));
 
         await expect(handler.get(ctx)).rejects.toThrow(HttpError);
         await expect(handler.get(ctx)).rejects.toThrow('Method Not Allowed');
     });
 
     it('should throw 405 for unimplemented POST', async () => {
-        const handler = new TestDOHandler('/test');
+        const handler = new TestDOHandler(mockState, mockEnv, '/test');
         const ctx = createMockDOContext(
-            new Request('https://example.com/test', { method: 'POST' }),
-            mockEnv,
-            mockState
+            new Request('https://example.com/test', { method: 'POST' })
         );
 
         await expect(handler.post(ctx)).rejects.toThrow(HttpError);
     });
 
     it('should throw 405 for unimplemented PUT', async () => {
-        const handler = new TestDOHandler('/test');
-        const ctx = createMockDOContext(
-            new Request('https://example.com/test', { method: 'PUT' }),
-            mockEnv,
-            mockState
-        );
+        const handler = new TestDOHandler(mockState, mockEnv, '/test');
+        const ctx = createMockDOContext(new Request('https://example.com/test', { method: 'PUT' }));
 
         await expect(handler.put(ctx)).rejects.toThrow(HttpError);
     });
 
     it('should throw 405 for unimplemented DELETE', async () => {
-        const handler = new TestDOHandler('/test');
+        const handler = new TestDOHandler(mockState, mockEnv, '/test');
         const ctx = createMockDOContext(
-            new Request('https://example.com/test', { method: 'DELETE' }),
-            mockEnv,
-            mockState
+            new Request('https://example.com/test', { method: 'DELETE' })
         );
 
         await expect(handler.delete(ctx)).rejects.toThrow(HttpError);
     });
 
     it('should throw 405 for unimplemented PATCH', async () => {
-        const handler = new TestDOHandler('/test');
+        const handler = new TestDOHandler(mockState, mockEnv, '/test');
         const ctx = createMockDOContext(
-            new Request('https://example.com/test', { method: 'PATCH' }),
-            mockEnv,
-            mockState
+            new Request('https://example.com/test', { method: 'PATCH' })
         );
 
         await expect(handler.patch(ctx)).rejects.toThrow(HttpError);
@@ -588,15 +596,39 @@ describe('DurableObjectRouteHandler', () => {
         const customLog = vi.fn() as any;
         customLog.setLevel = vi.fn();
 
-        const handler = new TestDOHandler('/test', { log: customLog });
+        const handler = new TestDOHandler(mockState, mockEnv, '/test', { log: customLog });
 
         expect(handler.log).toBe(customLog);
     });
 
     it('should create default logger if not provided', () => {
-        const handler = new TestDOHandler('/test');
+        const handler = new TestDOHandler(mockState, mockEnv, '/test');
 
         expect(handler.log).toBeDefined();
+    });
+
+    it('should have access to storage via this.storage', () => {
+        const handler = new TestDOHandler(mockState, mockEnv, '/test');
+
+        expect(handler.storage).toBe(mockState.storage);
+    });
+
+    it('should have access to id via this.id', () => {
+        const handler = new TestDOHandler(mockState, mockEnv, '/test');
+
+        expect(handler.id).toBe(mockState.id);
+    });
+
+    it('should have access to state via this.state', () => {
+        const handler = new TestDOHandler(mockState, mockEnv, '/test');
+
+        expect(handler.state).toBe(mockState);
+    });
+
+    it('should have access to env via this.env', () => {
+        const handler = new TestDOHandler(mockState, mockEnv, '/test');
+
+        expect(handler.env).toBe(mockEnv);
     });
 
     it('should allow subclass to implement GET', async () => {
@@ -606,30 +638,23 @@ describe('DurableObjectRouteHandler', () => {
             }
         }
 
-        const handler = new CustomDOHandler('/test');
-        const ctx = createMockDOContext(
-            new Request('https://example.com/test'),
-            mockEnv,
-            mockState
-        );
+        const handler = new CustomDOHandler(mockState, mockEnv, '/test');
+        const ctx = createMockDOContext(new Request('https://example.com/test'));
         const result = await handler.get(ctx);
 
         expect(result).toEqual({ message: 'DO custom GET' });
     });
 
-    it('should allow subclass to access doState through ctx', async () => {
+    it('should allow subclass to access storage via this.storage', async () => {
         class StatefulHandler extends DurableObjectRouteHandler<Env> {
-            async get(ctx: DurableObjectContext<Env>) {
-                return { id: ctx.doState.id.toString() };
+            async get(ctx: DurableObjectContext) {
+                // Access storage through this.storage, id through this.id
+                return { id: this.id.toString() };
             }
         }
 
-        const handler = new StatefulHandler('/test');
-        const ctx = createMockDOContext(
-            new Request('https://example.com/test'),
-            mockEnv,
-            mockState
-        );
+        const handler = new StatefulHandler(mockState, mockEnv, '/test');
+        const ctx = createMockDOContext(new Request('https://example.com/test'));
         const result = await handler.get(ctx);
 
         expect(result).toEqual({ id: 'test-id' });
@@ -637,16 +662,14 @@ describe('DurableObjectRouteHandler', () => {
 
     it('should receive params through ctx', async () => {
         class ParamsDOHandler extends DurableObjectRouteHandler<Env, { id: string }> {
-            async get(ctx: DurableObjectContext<Env, { id: string }>) {
+            async get(ctx: DurableObjectContext<{ id: string }>) {
                 return { params: ctx.params };
             }
         }
 
-        const handler = new ParamsDOHandler('/item/:id');
-        const ctx = createMockDOContext<Env, { id: string }>(
+        const handler = new ParamsDOHandler(mockState, mockEnv, '/item/:id');
+        const ctx = createMockDOContext<{ id: string }>(
             new Request('https://example.com/item/456'),
-            mockEnv,
-            mockState,
             { id: '456' }
         );
         const result = await handler.get(ctx);
@@ -656,7 +679,7 @@ describe('DurableObjectRouteHandler', () => {
 
     it('should allow modifying response through ctx.response', async () => {
         class CustomResponseHandler extends DurableObjectRouteHandler<Env> {
-            async get(ctx: DurableObjectContext<Env>) {
+            async get(ctx: DurableObjectContext) {
                 ctx.response.status = 201;
                 ctx.response.statusText = 'Created';
                 ctx.response.headers.set('X-Custom', 'value');
@@ -678,52 +701,33 @@ describe('DurableObjectRouteHandler', () => {
 });
 
 describe('DurableObjectContext', () => {
-    let mockState: DurableObjectState;
-    let mockEnv: Env;
-
-    beforeEach(() => {
-        mockState = createMockState();
-        mockEnv = { LOG_LEVEL: 'fatal' };
-    });
-
     it('should have all required properties', () => {
-        const ctx = createMockDOContext(
-            new Request('https://example.com/test'),
-            mockEnv,
-            mockState
-        );
+        const ctx = createMockDOContext(new Request('https://example.com/test'));
 
         expect(ctx.request).toBeInstanceOf(Request);
-        expect(ctx.env).toBe(mockEnv);
         expect(ctx.params).toEqual({});
-        expect(ctx.state).toEqual({});
+        expect(ctx.data).toEqual({});
         expect(ctx.response).toBeInstanceOf(ResponseContext);
         expect(ctx.log).toBeInstanceOf(Loganite);
-        expect(ctx.doState).toBe(mockState);
     });
 
     it('should allow setting params', () => {
-        const ctx = createMockDOContext<Env, { id: string }>(
-            new Request('https://example.com/test'),
-            mockEnv,
-            mockState,
-            { id: '123' }
-        );
+        const ctx = createMockDOContext<{ id: string }>(new Request('https://example.com/test'), {
+            id: '123',
+        });
 
         expect(ctx.params).toEqual({ id: '123' });
     });
 
-    it('should allow setting state', () => {
-        interface AuthState {
+    it('should allow setting data', () => {
+        interface AuthData {
             userId: string;
         }
-        const ctx = createMockDOContext<Env, Record<string, string>, AuthState>(
-            new Request('https://example.com/test'),
-            mockEnv,
-            mockState
+        const ctx = createMockDOContext<Record<string, string>, AuthData>(
+            new Request('https://example.com/test')
         );
 
-        ctx.state.userId = 'user-456';
-        expect(ctx.state.userId).toBe('user-456');
+        ctx.data.userId = 'user-456';
+        expect(ctx.data.userId).toBe('user-456');
     });
 });

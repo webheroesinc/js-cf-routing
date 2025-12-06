@@ -14,60 +14,60 @@ export interface Env extends BaseEnv {
     COUNTER: DurableObjectNamespace;
 }
 
-// Example Durable Object route handler
+// Example Durable Object route handler - uses this.storage for storage access
 class CounterHandler extends DurableObjectRouteHandler<Env> {
-    async get(ctx: DurableObjectContext<Env>): Promise<any> {
-        const count = (await ctx.doState.storage.get<number>('count')) || 0;
+    async get(ctx: DurableObjectContext): Promise<any> {
+        const count = (await this.storage.get<number>('count')) || 0;
         return { count };
     }
 
-    async post(ctx: DurableObjectContext<Env>): Promise<any> {
+    async post(ctx: DurableObjectContext): Promise<any> {
         const body = await ctx.request.json<{ increment?: number }>();
-        const currentCount = (await ctx.doState.storage.get<number>('count')) || 0;
+        const currentCount = (await this.storage.get<number>('count')) || 0;
         const newCount = currentCount + (body.increment || 1);
-        await ctx.doState.storage.put('count', newCount);
+        await this.storage.put('count', newCount);
         return { count: newCount };
     }
 
-    async delete(ctx: DurableObjectContext<Env>): Promise<any> {
-        await ctx.doState.storage.delete('count');
+    async delete(ctx: DurableObjectContext): Promise<any> {
+        await this.storage.delete('count');
         return { count: 0, reset: true };
     }
 }
 
-// Example handler with state
+// Example handler with params
 class StateHandler extends DurableObjectRouteHandler<Env, { key: string }> {
-    async get(ctx: DurableObjectContext<Env, { key: string }>): Promise<any> {
+    async get(ctx: DurableObjectContext<{ key: string }>): Promise<any> {
         if (!ctx.params?.key) {
             throw new HttpError(400, 'Key is required');
         }
-        const value = await ctx.doState.storage.get<string>(ctx.params.key);
+        const value = await this.storage.get<string>(ctx.params.key);
         return { key: ctx.params.key, value: value || null };
     }
 
-    async put(ctx: DurableObjectContext<Env, { key: string }>): Promise<any> {
+    async put(ctx: DurableObjectContext<{ key: string }>): Promise<any> {
         if (!ctx.params?.key) {
             throw new HttpError(400, 'Key is required');
         }
         const body = await ctx.request.json<{ value: string }>();
-        await ctx.doState.storage.put(ctx.params.key, body.value);
+        await this.storage.put(ctx.params.key, body.value);
         return { key: ctx.params.key, value: body.value, stored: true };
     }
 }
 
 // Additional handlers for info and reset
 class InfoHandler extends DurableObjectRouteHandler<Env> {
-    async get(ctx: DurableObjectContext<Env>): Promise<any> {
+    async get(ctx: DurableObjectContext): Promise<any> {
         return {
-            id: ctx.doState.id.toString(),
+            id: this.id.toString(),
             name: 'Counter Durable Object',
         };
     }
 }
 
 class ResetHandler extends DurableObjectRouteHandler<Env> {
-    async post(ctx: DurableObjectContext<Env>): Promise<any> {
-        await ctx.doState.storage.deleteAll();
+    async post(ctx: DurableObjectContext): Promise<any> {
+        await this.storage.deleteAll();
         return { reset: true };
     }
 }

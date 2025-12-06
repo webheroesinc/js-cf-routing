@@ -15,13 +15,13 @@ import Loganite from 'loganite';
 function createMockContext<
     E extends Env = Env,
     P = Record<string, string>,
-    S = Record<string, any>,
->(request: Request, env: E, params: P = {} as P): Context<E, P, S> {
+    D = Record<string, any>,
+>(request: Request, env: E, params: P = {} as P): Context<E, P, D> {
     return {
         request,
         env,
         params,
-        state: {} as S,
+        data: {} as D,
         response: new ResponseContext(),
         log: new Loganite('test', 'fatal'),
     };
@@ -673,12 +673,12 @@ describe('Middleware with next() pattern', () => {
         expect(body).toEqual({ cached: true });
     });
 
-    it('should allow middleware to set state for handler', async () => {
+    it('should allow middleware to set data for handler', async () => {
         const router = new WorkerRouter<Env>('test');
         router.log.setLevel('fatal');
 
         router.use(async (ctx, next) => {
-            ctx.state.user = { id: '123', name: 'Test User' };
+            ctx.data.user = { id: '123', name: 'Test User' };
             return next();
         });
 
@@ -690,7 +690,7 @@ describe('Middleware with next() pattern', () => {
             async get(
                 ctx: Context<Env, Record<string, string>, { user: { id: string; name: string } }>
             ) {
-                return { user: ctx.state.user };
+                return { user: ctx.data.user };
             }
         }
 

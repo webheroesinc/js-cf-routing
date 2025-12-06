@@ -20,32 +20,32 @@ export interface Env {
  * Context object passed to all middleware and route handlers.
  *
  * Provides access to the request, environment, route parameters,
- * shared state for middleware communication, and response customization.
+ * shared data for middleware communication, and response customization.
  *
  * @typeParam E - Environment type extending base Env interface
  * @typeParam P - Route parameters type
- * @typeParam S - State type for middleware-set data
+ * @typeParam D - Data type for middleware-set data
  *
  * @category Context
  *
  * @example
  * ```typescript
- * // Middleware setting state
+ * // Middleware setting data
  * const authMiddleware: Middleware<Env, Params, { user: User }> = async (ctx, next) => {
- *     ctx.state.user = await validateToken(ctx.request);
+ *     ctx.data.user = await validateToken(ctx.request);
  *     return next();
  * };
  *
- * // Handler reading state
+ * // Handler reading data
  * class UserHandler extends RouteHandler<Env, { id: string }, { user: User }> {
  *     async get(ctx) {
- *         const user = ctx.state.user;
+ *         const user = ctx.data.user;
  *         return { user };
  *     }
  * }
  * ```
  */
-export interface Context<E = Env, P = Params, S = Record<string, any>> {
+export interface Context<E = Env, P = Params, D = Record<string, any>> {
     /** Original incoming request */
     request: Request;
 
@@ -56,10 +56,10 @@ export interface Context<E = Env, P = Params, S = Record<string, any>> {
     params: P;
 
     /**
-     * Shared state for middleware to pass data to handlers.
+     * Shared data for middleware to pass to handlers.
      * Use this to store computed data like authenticated user, parsed body, etc.
      */
-    state: S;
+    data: D;
 
     /** Response customization (status, headers) */
     response: ResponseContext;
@@ -79,7 +79,7 @@ export interface Context<E = Env, P = Params, S = Record<string, any>> {
  *
  * @typeParam E - Environment type
  * @typeParam P - Route parameters type
- * @typeParam S - State type
+ * @typeParam D - Data type for middleware-set data
  *
  * @category Types
  *
@@ -95,7 +95,7 @@ export interface Context<E = Env, P = Params, S = Record<string, any>> {
  * };
  * ```
  */
-export type Middleware<E = Env, P = Params, S = Record<string, any>> = (
-    ctx: Context<E, P, S>,
+export type Middleware<E = Env, P = Params, D = Record<string, any>> = (
+    ctx: Context<E, P, D>,
     next: () => Promise<Response>
 ) => Promise<Response>;
