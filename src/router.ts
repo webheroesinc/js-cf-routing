@@ -1,6 +1,6 @@
 import { HttpError } from '@whi/http-errors';
 import { Router } from 'itty-router';
-import { corsHeaders, CorsConfig, buildCorsHeaders } from './cors.js';
+import { corsHeaders, CorsConfig, CorsOriginContext, buildCorsHeaders } from './cors.js';
 import { ResponseContext } from './response-context.js';
 import { Context, Middleware, Params, Env } from './context.js';
 import { Logger } from './logger.js';
@@ -31,12 +31,14 @@ interface ResponseBuildContext {
  * @param result The return value from a route handler
  * @param ctx The request context
  * @param corsConfig Optional CORS configuration
+ * @param corsCtx Optional context for resolving dynamic CORS origins
  * @returns A properly formatted Response
  */
 export function buildResponse(
     result: any,
     ctx: ResponseBuildContext,
-    corsConfig?: CorsConfig
+    corsConfig?: CorsConfig<any, any>,
+    corsCtx?: CorsOriginContext<any, any>
 ): Response {
     // If handler returns a Response directly, use it as-is
     if (result instanceof Response) {
@@ -46,7 +48,7 @@ export function buildResponse(
     // Get CORS headers
     const requestOrigin = ctx.request.headers.get('Origin');
     const corsHeadersToApply = corsConfig
-        ? buildCorsHeaders(corsConfig, requestOrigin)
+        ? buildCorsHeaders(corsConfig, requestOrigin, corsCtx)
         : corsHeaders;
 
     // Build response using context settings merged with defaults
@@ -73,19 +75,21 @@ export function buildResponse(
  * @param error The error that was thrown
  * @param ctx The request context
  * @param corsConfig Optional CORS configuration
+ * @param corsCtx Optional context for resolving dynamic CORS origins
  * @returns An error Response
  */
 export function buildErrorResponse(
     error: unknown,
     ctx: ResponseBuildContext,
-    corsConfig?: CorsConfig
+    corsConfig?: CorsConfig<any, any>,
+    corsCtx?: CorsOriginContext<any, any>
 ): Response {
     ctx.log.error('Request error', { error: String(error) });
 
     // Get CORS headers
     const requestOrigin = ctx.request.headers.get('Origin');
     const corsHeadersToApply = corsConfig
-        ? buildCorsHeaders(corsConfig, requestOrigin)
+        ? buildCorsHeaders(corsConfig, requestOrigin, corsCtx)
         : corsHeaders;
 
     if (error instanceof HttpError) {
@@ -480,26 +484,10 @@ export class WorkerRouter<E extends Env> {
             log: this.log,
         });
 
-        // Register OPTIONS handler for CORS preflight
-        this.router.options(path, (request: Request, env: E) => {
-            const ctx = createContext<E, P, D>(request, env, (request.params || {}) as P, this.log);
-            if (env.LOG_LEVEL) ctx.log.setLevel(env.LOG_LEVEL);
-
-            const requestOrigin = request.headers.get('Origin');
-            const handlerCorsConfig = handler.cors(ctx);
-            const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
-            const headersToUse = effectiveCorsConfig
-                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
-                : corsHeaders;
-
-            return new Response(null, {
-                status: 204,
-                headers: headersToUse,
-            });
-        });
-
-        // Create handler wrapper for each HTTP method
-        const createMethodHandler = (method: 'get' | 'post' | 'put' | 'delete' | 'patch') => {
+        // Create handler wrapper for each HTTP method (including OPTIONS)
+        const createMethodHandler = (
+            method: 'options' | 'get' | 'post' | 'put' | 'delete' | 'patch'
+        ) => {
             return async (request: Request, env: E) => {
                 const start = Date.now();
                 const ctx = createContext<E, P, D>(
@@ -518,15 +506,35 @@ export class WorkerRouter<E extends Env> {
                 const handlerCorsConfig = handler.cors(ctx);
                 const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
 
+                // Build cors context for dynamic origins
+                const corsCtx: CorsOriginContext<E, D> = {
+                    request: ctx.request,
+                    env: ctx.env,
+                    data: ctx.data,
+                };
+
                 // Build the middleware chain
                 const matchingMiddlewares = this.getMatchingMiddlewares(request, path);
                 ctx.log.trace('Middleware chain', { count: matchingMiddlewares.length });
 
-                // Final handler that calls the route handler method
+                // Final handler - either OPTIONS preflight or actual method
                 const finalHandler: Middleware<E, P, D> = async (ctx) => {
+                    if (method === 'options') {
+                        // OPTIONS preflight response
+                        const requestOrigin = request.headers.get('Origin');
+                        const headersToUse = effectiveCorsConfig
+                            ? buildCorsHeaders(effectiveCorsConfig, requestOrigin, corsCtx)
+                            : corsHeaders;
+
+                        return new Response(null, {
+                            status: 204,
+                            headers: headersToUse,
+                        });
+                    }
+
                     ctx.log.trace('Executing handler', { method });
                     const result = await handler[method](ctx);
-                    return buildResponse(result, ctx, effectiveCorsConfig);
+                    return buildResponse(result, ctx, effectiveCorsConfig, corsCtx);
                 };
 
                 // Execute the chain
@@ -548,7 +556,8 @@ export class WorkerRouter<E extends Env> {
             };
         };
 
-        // Register each HTTP method
+        // Register each HTTP method (including OPTIONS for CORS preflight)
+        this.router.options(path, createMethodHandler('options'));
         this.router.get(path, createMethodHandler('get'));
         this.router.post(path, createMethodHandler('post'));
         this.router.put(path, createMethodHandler('put'));
@@ -591,9 +600,14 @@ export class WorkerRouter<E extends Env> {
     private async executeChain<P extends Params, D>(
         ctx: Context<E, P, D>,
         middlewares: Middleware<E, P, D>[],
-        corsConfig?: CorsConfig
+        corsConfig?: CorsConfig<E, D>
     ): Promise<Response> {
         let index = 0;
+        const corsCtx: CorsOriginContext<E, D> = {
+            request: ctx.request,
+            env: ctx.env,
+            data: ctx.data,
+        };
 
         const next = async (): Promise<Response> => {
             if (index >= middlewares.length) {
@@ -606,14 +620,14 @@ export class WorkerRouter<E extends Env> {
             try {
                 return await middleware(ctx, next);
             } catch (error) {
-                return buildErrorResponse(error, ctx, corsConfig);
+                return buildErrorResponse(error, ctx, corsConfig, corsCtx);
             }
         };
 
         try {
             return await next();
         } catch (error) {
-            return buildErrorResponse(error, ctx, corsConfig);
+            return buildErrorResponse(error, ctx, corsConfig, corsCtx);
         }
     }
 
@@ -641,32 +655,76 @@ export class WorkerRouter<E extends Env> {
         }
 
         // Handle CORS preflight requests (catch-all for routes without custom OPTIONS handlers)
-        this.router.options('*', (request: Request) => {
-            const requestOrigin = request.headers.get('Origin');
-            const headersToUse = this.corsConfig
-                ? buildCorsHeaders(this.corsConfig, requestOrigin)
-                : corsHeaders;
+        this.router.options('*', async (request: Request, env: E) => {
+            const ctx = createContext<E, Params, Record<string, any>>(
+                request,
+                env,
+                (request.params || {}) as Params,
+                this.log
+            );
+            if (env.LOG_LEVEL) ctx.log.setLevel(env.LOG_LEVEL);
 
-            return new Response(null, {
-                status: 204,
-                headers: headersToUse,
-            });
+            const corsCtx: CorsOriginContext<E, Record<string, any>> = {
+                request: ctx.request,
+                env: ctx.env,
+                data: ctx.data,
+            };
+
+            // Build the middleware chain
+            const matchingMiddlewares = this.getMatchingMiddlewares(request, '*');
+
+            // Final handler returns OPTIONS preflight response
+            const finalHandler: Middleware<E, Params, Record<string, any>> = async () => {
+                const requestOrigin = request.headers.get('Origin');
+                const headersToUse = this.corsConfig
+                    ? buildCorsHeaders(this.corsConfig, requestOrigin, corsCtx)
+                    : corsHeaders;
+
+                return new Response(null, {
+                    status: 204,
+                    headers: headersToUse,
+                });
+            };
+
+            return this.executeChain(ctx, [...matchingMiddlewares, finalHandler], this.corsConfig);
         });
 
         // Handle 404 - Route not found
-        this.router.all('*', (request: Request) => {
-            const requestOrigin = request.headers.get('Origin');
-            const corsHeadersToApply = this.corsConfig
-                ? buildCorsHeaders(this.corsConfig, requestOrigin)
-                : corsHeaders;
+        this.router.all('*', async (request: Request, env: E) => {
+            const ctx = createContext<E, Params, Record<string, any>>(
+                request,
+                env,
+                (request.params || {}) as Params,
+                this.log
+            );
+            if (env.LOG_LEVEL) ctx.log.setLevel(env.LOG_LEVEL);
 
-            return new Response(JSON.stringify({ error: 'Not found' }), {
-                status: 404,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...corsHeadersToApply,
-                },
-            });
+            const corsCtx: CorsOriginContext<E, Record<string, any>> = {
+                request: ctx.request,
+                env: ctx.env,
+                data: ctx.data,
+            };
+
+            // Build the middleware chain
+            const matchingMiddlewares = this.getMatchingMiddlewares(request, '*');
+
+            // Final handler returns 404
+            const finalHandler: Middleware<E, Params, Record<string, any>> = async () => {
+                const requestOrigin = request.headers.get('Origin');
+                const corsHeadersToApply = this.corsConfig
+                    ? buildCorsHeaders(this.corsConfig, requestOrigin, corsCtx)
+                    : corsHeaders;
+
+                return new Response(JSON.stringify({ error: 'Not found' }), {
+                    status: 404,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...corsHeadersToApply,
+                    },
+                });
+            };
+
+            return this.executeChain(ctx, [...matchingMiddlewares, finalHandler], this.corsConfig);
         });
 
         this.isBuilt = true;
@@ -1034,29 +1092,10 @@ export class DurableObjectRouter<E extends Env> {
             log: this.log,
         });
 
-        // Register OPTIONS handler for CORS preflight
-        this.router.options(path, (request: Request) => {
-            const ctx = createDurableObjectContext<P, D>(
-                request,
-                (request.params || {}) as P,
-                this.log
-            );
-
-            const requestOrigin = request.headers.get('Origin');
-            const handlerCorsConfig = handler.cors(ctx);
-            const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
-            const headersToUse = effectiveCorsConfig
-                ? buildCorsHeaders(effectiveCorsConfig, requestOrigin)
-                : corsHeaders;
-
-            return new Response(null, {
-                status: 204,
-                headers: headersToUse,
-            });
-        });
-
-        // Create handler wrapper for each HTTP method
-        const createMethodHandler = (method: 'get' | 'post' | 'put' | 'delete' | 'patch') => {
+        // Create handler wrapper for each HTTP method (including OPTIONS)
+        const createMethodHandler = (
+            method: 'options' | 'get' | 'post' | 'put' | 'delete' | 'patch'
+        ) => {
             return async (request: Request) => {
                 const start = Date.now();
                 const ctx = createDurableObjectContext<P, D>(
@@ -1072,19 +1111,41 @@ export class DurableObjectRouter<E extends Env> {
                 const handlerCorsConfig = handler.cors(ctx);
                 const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
 
+                // Build cors context for dynamic origins (env comes from this.env for DOs)
+                const corsCtx: CorsOriginContext<E, D> = {
+                    request: ctx.request,
+                    env: this.env,
+                    data: ctx.data,
+                };
+
                 const matchingMiddlewares = this.getMatchingMiddlewares(request, path);
                 ctx.log.trace('Middleware chain', { count: matchingMiddlewares.length });
 
+                // Final handler - either OPTIONS preflight or actual method
                 const finalHandler: DurableObjectMiddleware<P, D> = async (ctx, state) => {
+                    if (method === 'options') {
+                        // OPTIONS preflight response
+                        const requestOrigin = request.headers.get('Origin');
+                        const headersToUse = effectiveCorsConfig
+                            ? buildCorsHeaders(effectiveCorsConfig, requestOrigin, corsCtx)
+                            : corsHeaders;
+
+                        return new Response(null, {
+                            status: 204,
+                            headers: headersToUse,
+                        });
+                    }
+
                     ctx.log.trace('Executing handler', { method });
                     const result = await handler[method](ctx);
-                    return buildResponse(result, ctx, effectiveCorsConfig);
+                    return buildResponse(result, ctx, effectiveCorsConfig, corsCtx);
                 };
 
                 const response = await this.executeChain(
                     ctx,
                     [...matchingMiddlewares, finalHandler],
-                    effectiveCorsConfig
+                    effectiveCorsConfig,
+                    corsCtx
                 );
 
                 const duration = Date.now() - start;
@@ -1099,6 +1160,8 @@ export class DurableObjectRouter<E extends Env> {
             };
         };
 
+        // Register each HTTP method (including OPTIONS for CORS preflight)
+        this.router.options(path, createMethodHandler('options'));
         this.router.get(path, createMethodHandler('get'));
         this.router.post(path, createMethodHandler('post'));
         this.router.put(path, createMethodHandler('put'));
@@ -1133,7 +1196,8 @@ export class DurableObjectRouter<E extends Env> {
     private async executeChain<P extends Params, D>(
         ctx: DurableObjectContext<P, D>,
         middlewares: DurableObjectMiddleware<P, D>[],
-        corsConfig?: CorsConfig
+        corsConfig?: CorsConfig<E, D>,
+        corsCtx?: CorsOriginContext<E, D>
     ): Promise<Response> {
         let index = 0;
 
@@ -1147,14 +1211,14 @@ export class DurableObjectRouter<E extends Env> {
             try {
                 return await middleware(ctx, this.doState, next);
             } catch (error) {
-                return buildErrorResponse(error, ctx, corsConfig);
+                return buildErrorResponse(error, ctx, corsConfig, corsCtx);
             }
         };
 
         try {
             return await next();
         } catch (error) {
-            return buildErrorResponse(error, ctx, corsConfig);
+            return buildErrorResponse(error, ctx, corsConfig, corsCtx);
         }
     }
 
@@ -1163,31 +1227,83 @@ export class DurableObjectRouter<E extends Env> {
             return this.router;
         }
 
-        this.router.options('*', (request: Request) => {
-            const requestOrigin = request.headers.get('Origin');
-            const headersToUse = this.corsConfig
-                ? buildCorsHeaders(this.corsConfig, requestOrigin)
-                : corsHeaders;
+        // Handle CORS preflight requests (catch-all for routes without custom OPTIONS handlers)
+        this.router.options('*', async (request: Request) => {
+            const ctx = createDurableObjectContext<Params, Record<string, any>>(
+                request,
+                (request.params || {}) as Params,
+                this.log
+            );
 
-            return new Response(null, {
-                status: 204,
-                headers: headersToUse,
-            });
+            const corsCtx: CorsOriginContext<E, Record<string, any>> = {
+                request: ctx.request,
+                env: this.env,
+                data: ctx.data,
+            };
+
+            // Build the middleware chain
+            const matchingMiddlewares = this.getMatchingMiddlewares(request, '*');
+
+            // Final handler returns OPTIONS preflight response
+            const finalHandler: DurableObjectMiddleware<Params, Record<string, any>> = async () => {
+                const requestOrigin = request.headers.get('Origin');
+                const headersToUse = this.corsConfig
+                    ? buildCorsHeaders(this.corsConfig, requestOrigin, corsCtx)
+                    : corsHeaders;
+
+                return new Response(null, {
+                    status: 204,
+                    headers: headersToUse,
+                });
+            };
+
+            return this.executeChain(
+                ctx,
+                [...matchingMiddlewares, finalHandler],
+                this.corsConfig,
+                corsCtx
+            );
         });
 
-        this.router.all('*', (request: Request) => {
-            const requestOrigin = request.headers.get('Origin');
-            const corsHeadersToApply = this.corsConfig
-                ? buildCorsHeaders(this.corsConfig, requestOrigin)
-                : corsHeaders;
+        // Handle 404 - Route not found
+        this.router.all('*', async (request: Request) => {
+            const ctx = createDurableObjectContext<Params, Record<string, any>>(
+                request,
+                (request.params || {}) as Params,
+                this.log
+            );
 
-            return new Response(JSON.stringify({ error: 'Not found' }), {
-                status: 404,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...corsHeadersToApply,
-                },
-            });
+            const corsCtx: CorsOriginContext<E, Record<string, any>> = {
+                request: ctx.request,
+                env: this.env,
+                data: ctx.data,
+            };
+
+            // Build the middleware chain
+            const matchingMiddlewares = this.getMatchingMiddlewares(request, '*');
+
+            // Final handler returns 404
+            const finalHandler: DurableObjectMiddleware<Params, Record<string, any>> = async () => {
+                const requestOrigin = request.headers.get('Origin');
+                const corsHeadersToApply = this.corsConfig
+                    ? buildCorsHeaders(this.corsConfig, requestOrigin, corsCtx)
+                    : corsHeaders;
+
+                return new Response(JSON.stringify({ error: 'Not found' }), {
+                    status: 404,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...corsHeadersToApply,
+                    },
+                });
+            };
+
+            return this.executeChain(
+                ctx,
+                [...matchingMiddlewares, finalHandler],
+                this.corsConfig,
+                corsCtx
+            );
         });
 
         this.isBuilt = true;

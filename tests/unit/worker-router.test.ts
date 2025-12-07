@@ -730,4 +730,147 @@ describe('Middleware with next() pattern', () => {
         const body = await response.json();
         expect(body).toEqual({ error: 'Unauthorized', code: 'AUTH_FAILED' });
     });
+
+    it('should execute middleware for OPTIONS requests', async () => {
+        const executionOrder: string[] = [];
+
+        const router = new WorkerRouter<Env>('test', {
+            cors: { origins: '*' },
+        });
+        router.log.setLevel('fatal');
+
+        router.use(async (ctx, next) => {
+            executionOrder.push('middleware');
+            return next();
+        });
+
+        class TestHandler extends RouteHandler<Env> {
+            async get(ctx: Context<Env>) {
+                return { data: 'test' };
+            }
+        }
+
+        router.defineRouteHandler('/test', TestHandler);
+        const builtRouter = router.build();
+
+        const response = await builtRouter.fetch(
+            new Request('https://example.com/test', { method: 'OPTIONS' }),
+            { LOG_LEVEL: 'fatal' }
+        );
+
+        expect(response.status).toBe(204);
+        expect(executionOrder).toEqual(['middleware']);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    });
+
+    it('should allow middleware to short-circuit OPTIONS requests', async () => {
+        const router = new WorkerRouter<Env>('test', {
+            cors: { origins: '*' },
+        });
+        router.log.setLevel('fatal');
+
+        router.use(async (ctx, next) => {
+            // Rate limiting middleware that blocks the request
+            throw new HttpError(429, 'Too Many Requests');
+        });
+
+        class TestHandler extends RouteHandler<Env> {
+            async get(ctx: Context<Env>) {
+                return { data: 'test' };
+            }
+        }
+
+        router.defineRouteHandler('/test', TestHandler);
+        const builtRouter = router.build();
+
+        const response = await builtRouter.fetch(
+            new Request('https://example.com/test', { method: 'OPTIONS' }),
+            { LOG_LEVEL: 'fatal' }
+        );
+
+        expect(response.status).toBe(429);
+    });
+
+    it('should allow middleware to set data used by dynamic CORS origins', async () => {
+        interface TestEnv {
+            LOG_LEVEL: string;
+        }
+        interface TestData {
+            allowedOrigins: string[];
+        }
+
+        const router = new WorkerRouter<TestEnv>('test', {
+            cors: {
+                origins: ({ request, data }: { request: Request; data: TestData }) => {
+                    const origin = request.headers.get('Origin');
+                    return origin && data.allowedOrigins?.includes(origin) ? origin : null;
+                },
+                credentials: true,
+            },
+        });
+        router.log.setLevel('fatal');
+
+        // Middleware sets allowed origins based on some logic
+        router.use(async (ctx, next) => {
+            (ctx.data as TestData).allowedOrigins = ['https://allowed.example.com'];
+            return next();
+        });
+
+        class TestHandler extends RouteHandler<TestEnv> {
+            async get(ctx: Context<TestEnv>) {
+                return { data: 'test' };
+            }
+        }
+
+        router.defineRouteHandler('/test', TestHandler);
+        const builtRouter = router.build();
+
+        // Request from allowed origin
+        const allowedRequest = new Request('https://example.com/test', {
+            method: 'OPTIONS',
+            headers: { Origin: 'https://allowed.example.com' },
+        });
+        const allowedResponse = await builtRouter.fetch(allowedRequest, { LOG_LEVEL: 'fatal' });
+
+        expect(allowedResponse.status).toBe(204);
+        expect(allowedResponse.headers.get('Access-Control-Allow-Origin')).toBe(
+            'https://allowed.example.com'
+        );
+        expect(allowedResponse.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+
+        // Request from non-allowed origin
+        const blockedRequest = new Request('https://example.com/test', {
+            method: 'OPTIONS',
+            headers: { Origin: 'https://blocked.example.com' },
+        });
+        const blockedResponse = await builtRouter.fetch(blockedRequest, { LOG_LEVEL: 'fatal' });
+
+        expect(blockedResponse.status).toBe(204);
+        expect(blockedResponse.headers.get('Access-Control-Allow-Origin')).toBeNull();
+    });
+
+    it('should run middleware for catch-all OPTIONS handler', async () => {
+        const executionOrder: string[] = [];
+
+        const router = new WorkerRouter<Env>('test', {
+            cors: { origins: '*' },
+        });
+        router.log.setLevel('fatal');
+
+        router.use(async (ctx, next) => {
+            executionOrder.push('middleware');
+            return next();
+        });
+
+        // No handlers defined - will hit catch-all
+        const builtRouter = router.build();
+
+        const response = await builtRouter.fetch(
+            new Request('https://example.com/unknown', { method: 'OPTIONS' }),
+            { LOG_LEVEL: 'fatal' }
+        );
+
+        expect(response.status).toBe(204);
+        expect(executionOrder).toEqual(['middleware']);
+    });
 });

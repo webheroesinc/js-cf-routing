@@ -4,7 +4,9 @@ import {
     addCorsHeaders,
     createCorsHandler,
     buildCorsHeaders,
+    resolveOrigins,
     CorsConfig,
+    CorsOriginContext,
 } from '../../src/cors.js';
 
 describe('CORS Utilities', () => {
@@ -80,6 +82,121 @@ describe('CORS Utilities', () => {
             expect(headers['Access-Control-Allow-Methods']).toBe('GET, POST');
             expect(headers['Access-Control-Allow-Headers']).toBe('X-Custom-Header');
             expect(headers['Access-Control-Max-Age']).toBe('3600');
+        });
+
+        it('should support dynamic origins function', () => {
+            interface TestEnv {
+                ALLOWED_ORIGINS: string;
+            }
+            const config: CorsConfig<TestEnv, Record<string, any>> = {
+                origins: ({ request, env }) => {
+                    const origin = request.headers.get('Origin');
+                    const allowed = env.ALLOWED_ORIGINS.split(',');
+                    return origin && allowed.includes(origin) ? origin : null;
+                },
+                credentials: true,
+            };
+
+            const ctx: CorsOriginContext<TestEnv, Record<string, any>> = {
+                request: new Request('https://example.com', {
+                    headers: { Origin: 'https://app.example.com' },
+                }),
+                env: { ALLOWED_ORIGINS: 'https://app.example.com,https://other.example.com' },
+                data: {},
+            };
+
+            const headers = buildCorsHeaders(config, 'https://app.example.com', ctx);
+
+            expect(headers['Access-Control-Allow-Origin']).toBe('https://app.example.com');
+            expect(headers['Access-Control-Allow-Credentials']).toBe('true');
+            expect(headers['Vary']).toBe('Origin');
+        });
+
+        it('should return no origin when dynamic function returns null', () => {
+            const config: CorsConfig<{ ALLOWED: string }, Record<string, any>> = {
+                origins: ({ request, env }) => {
+                    const origin = request.headers.get('Origin');
+                    return origin === env.ALLOWED ? origin : null;
+                },
+            };
+
+            const ctx: CorsOriginContext<{ ALLOWED: string }, Record<string, any>> = {
+                request: new Request('https://example.com', {
+                    headers: { Origin: 'https://malicious.com' },
+                }),
+                env: { ALLOWED: 'https://allowed.com' },
+                data: {},
+            };
+
+            const headers = buildCorsHeaders(config, 'https://malicious.com', ctx);
+
+            expect(headers['Access-Control-Allow-Origin']).toBeUndefined();
+        });
+
+        it('should handle dynamic origins with middleware data', () => {
+            interface TestData {
+                allowedOrigins: string[];
+            }
+            const config: CorsConfig<object, TestData> = {
+                origins: ({ request, data }) => {
+                    const origin = request.headers.get('Origin');
+                    return origin && data.allowedOrigins.includes(origin) ? origin : null;
+                },
+            };
+
+            const ctx: CorsOriginContext<object, TestData> = {
+                request: new Request('https://example.com', {
+                    headers: { Origin: 'https://allowed.com' },
+                }),
+                env: {},
+                data: { allowedOrigins: ['https://allowed.com'] },
+            };
+
+            const headers = buildCorsHeaders(config, 'https://allowed.com', ctx);
+
+            expect(headers['Access-Control-Allow-Origin']).toBe('https://allowed.com');
+        });
+    });
+
+    describe('resolveOrigins', () => {
+        it('should return static string origins unchanged', () => {
+            expect(resolveOrigins('https://example.com')).toBe('https://example.com');
+        });
+
+        it('should return static array origins unchanged', () => {
+            const origins = ['https://a.com', 'https://b.com'];
+            expect(resolveOrigins(origins)).toEqual(origins);
+        });
+
+        it('should return undefined for undefined origins', () => {
+            expect(resolveOrigins(undefined)).toBeUndefined();
+        });
+
+        it('should resolve function origins with context', () => {
+            const originsFn = ({ env }: CorsOriginContext<{ ORIGIN: string }, any>) => env.ORIGIN;
+            const ctx: CorsOriginContext<{ ORIGIN: string }, any> = {
+                request: new Request('https://example.com'),
+                env: { ORIGIN: 'https://dynamic.com' },
+                data: {},
+            };
+
+            expect(resolveOrigins(originsFn, ctx)).toBe('https://dynamic.com');
+        });
+
+        it('should return undefined for function origins without context', () => {
+            const originsFn = () => 'https://example.com';
+            expect(resolveOrigins(originsFn)).toBeUndefined();
+        });
+
+        it('should return undefined when function returns null', () => {
+            const originsFn = () => null;
+            const ctx: CorsOriginContext<object, any> = {
+                request: new Request('https://example.com'),
+                env: {},
+                data: {},
+            };
+
+            expect(resolveOrigins(originsFn, ctx)).toBeUndefined();
         });
     });
 

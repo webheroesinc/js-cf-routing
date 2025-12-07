@@ -4,18 +4,47 @@
  */
 
 /**
+ * Context passed to dynamic CORS origin functions
+ *
+ * @category Types
+ */
+export interface CorsOriginContext<E = unknown, D = unknown> {
+    /** Original incoming request */
+    request: Request;
+    /** Environment bindings (secrets, KV, etc.) */
+    env: E;
+    /** Middleware-set data */
+    data: D;
+}
+
+/**
  * Configuration options for CORS behavior
  *
  * @category Types
  */
-export interface CorsConfig {
+export interface CorsConfig<E = unknown, D = unknown> {
     /**
      * Allowed origins for CORS requests.
      * - If not set, Access-Control-Allow-Origin header is not added by default
      * - Use '*' to allow all origins (not compatible with credentials: true)
      * - Use an array of specific origins for restricted access
+     * - Use a function for dynamic origin validation with access to env and middleware data
+     *
+     * @example
+     * ```typescript
+     * // Static origins
+     * origins: 'https://example.com'
+     * origins: ['https://app1.com', 'https://app2.com']
+     *
+     * // Dynamic origins with env access
+     * origins: ({ request, env }) => {
+     *     const origin = request.headers.get('Origin');
+     *     const allowed = env.ALLOWED_ORIGINS?.split(',') || [];
+     *     return origin && allowed.includes(origin) ? origin : null;
+     * }
+     * ```
      */
-    origins?: string | string[];
+    origins?: string | string[] | ((ctx: CorsOriginContext<E, D>) => string | null);
 
     /**
      * Allowed HTTP methods for CORS requests.
@@ -61,17 +90,45 @@ export const corsHeaders: Record<string, string> = {
 };
 
 /**
+ * Resolve dynamic origins from a CorsConfig
+ *
+ * @param origins - The origins config (static or function)
+ * @param ctx - Context for resolving dynamic origins
+ * @returns Resolved origins (string, string[], or undefined)
+ *
+ * @category Utilities
+ */
+export function resolveOrigins<E, D>(
+    origins: CorsConfig<E, D>['origins'],
+    ctx?: CorsOriginContext<E, D>
+): string | string[] | undefined {
+    if (!origins) {
+        return undefined;
+    }
+    if (typeof origins === 'function') {
+        if (!ctx) {
+            return undefined;
+        }
+        const result = origins(ctx);
+        return result ?? undefined;
+    }
+    return origins;
+}
+
+/**
  * Build CORS headers from a CorsConfig object and optional request origin
  *
  * @param config - CORS configuration options
  * @param requestOrigin - The origin from the incoming request (used for dynamic origin matching)
+ * @param ctx - Optional context for resolving dynamic origins (required if origins is a function)
  * @returns A record of CORS headers
  *
  * @category Utilities
  */
-export function buildCorsHeaders(
-    config: CorsConfig,
-    requestOrigin?: string | null
+export function buildCorsHeaders<E = unknown, D = unknown>(
+    config: CorsConfig<E, D>,
+    requestOrigin?: string | null,
+    ctx?: CorsOriginContext<E, D>
 ): Record<string, string> {
     const headers: Record<string, string> = {
         'Access-Control-Allow-Methods': config.methods ?? 'GET, POST, PUT, DELETE, OPTIONS',
@@ -80,19 +137,26 @@ export function buildCorsHeaders(
         'Access-Control-Max-Age': config.maxAge ?? '86400',
     };
 
+    // Resolve origins (may be static or dynamic function)
+    const origins = resolveOrigins(config.origins, ctx);
+
     // Handle origins
-    if (config.origins) {
-        if (config.origins === '*') {
+    if (origins) {
+        if (origins === '*') {
             headers['Access-Control-Allow-Origin'] = '*';
-        } else if (Array.isArray(config.origins)) {
+        } else if (Array.isArray(origins)) {
             // Check if request origin is in allowed list
-            if (requestOrigin && config.origins.includes(requestOrigin)) {
+            if (requestOrigin && origins.includes(requestOrigin)) {
                 headers['Access-Control-Allow-Origin'] = requestOrigin;
                 headers['Vary'] = 'Origin';
             }
         } else {
-            // Single specific origin
-            headers['Access-Control-Allow-Origin'] = config.origins;
+            // Single specific origin (either static or returned from function)
+            headers['Access-Control-Allow-Origin'] = origins;
+            // If origins was a function, we should vary on Origin
+            if (typeof config.origins === 'function') {
+                headers['Vary'] = 'Origin';
+            }
         }
     }
 

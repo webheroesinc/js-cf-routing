@@ -214,6 +214,40 @@ class ApiHandler extends RouteHandler<Env> {
 }
 ```
 
+**Dynamic Origins from Environment Variables**
+
+For Cloudflare Workers, allowed origins are often configured via environment variables. Use a function for `origins` to access `env` and middleware-set `data`:
+
+```typescript
+const router = new WorkerRouter<Env>('api', {
+    cors: {
+        origins: ({ request, env, data }) => {
+            const origin = request.headers.get('Origin');
+            const allowed = env.ALLOWED_ORIGINS?.split(',') || [];
+            return origin && allowed.includes(origin) ? origin : null;
+        },
+        credentials: true,
+    }
+});
+```
+
+The function receives:
+- `request` - The incoming Request
+- `env` - Environment bindings (secrets, KV, etc.)
+- `data` - Middleware-set data (useful if middleware determines allowed origins)
+
+**Middleware on OPTIONS Requests**
+
+Middleware runs for all requests including OPTIONS preflight. This enables rate limiting, logging, and authentication checks on preflight requests:
+
+```typescript
+router.use(async (ctx, next) => {
+    // This runs for GET, POST, OPTIONS, etc.
+    console.log(`${ctx.request.method} ${ctx.request.url}`);
+    return next();
+});
+```
+
 CORS headers are automatically consistent between OPTIONS preflight and actual responses.
 
 ### Logging

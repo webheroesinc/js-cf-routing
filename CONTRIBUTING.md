@@ -30,7 +30,8 @@ npm run test:coverage
 │   ├── router.ts          # Router implementations
 │   ├── context.ts         # Context and Middleware types
 │   ├── response-context.ts # ResponseContext class
-│   └── cors.ts            # CORS utilities
+│   ├── cors.ts            # CORS utilities (static and dynamic origins)
+│   └── logger.ts          # Logger implementation
 ├── lib/                   # Compiled JavaScript (generated)
 ├── tests/
 │   ├── unit/              # Unit tests
@@ -204,8 +205,9 @@ Consider adding `tests/scenarios/` for common patterns:
 - API with authentication middleware
 - CRUD resource with input validation
 - Durable Object-backed session management
-- Rate limiting middleware
+- Rate limiting middleware (including OPTIONS preflight)
 - Request/response logging patterns
+- Dynamic CORS with environment-based origin validation
 
 ### Durable Object Advanced Patterns
 - Alarm handling
