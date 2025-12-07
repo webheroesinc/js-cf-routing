@@ -3,7 +3,7 @@ import { Router } from 'itty-router';
 import { corsHeaders, CorsConfig, buildCorsHeaders } from './cors.js';
 import { ResponseContext } from './response-context.js';
 import { Context, Middleware, Params, Env } from './context.js';
-import Loganite from 'loganite';
+import { Logger } from './logger.js';
 
 // Re-export types from context
 export { Context, Middleware, Params, Env };
@@ -22,7 +22,7 @@ declare global {
 interface ResponseBuildContext {
     request: Request;
     response: ResponseContext;
-    log: Loganite;
+    log: Logger;
 }
 
 /**
@@ -80,7 +80,7 @@ export function buildErrorResponse(
     ctx: ResponseBuildContext,
     corsConfig?: CorsConfig
 ): Response {
-    ctx.log.error(`Error: ${error}`);
+    ctx.log.error('Request error', { error: String(error) });
 
     // Get CORS headers
     const requestOrigin = ctx.request.headers.get('Origin');
@@ -130,7 +130,7 @@ export function createContext<E extends Env, P extends Params, D = Record<string
     request: Request,
     env: E,
     params: P,
-    log: Loganite
+    log: Logger
 ): Context<E, P, D> {
     return {
         request,
@@ -184,13 +184,13 @@ export abstract class RouteHandler<
     D = Record<string, any>,
 > {
     protected path: string;
-    log: Loganite;
+    log: Logger;
 
-    constructor(path: string, options?: { log?: Loganite }) {
+    constructor(path: string, options?: { log?: Logger }) {
         this.path = path;
 
         if (options?.log) this.log = options.log;
-        else this.log = new Loganite(path, 'fatal');
+        else this.log = new Logger(path, 'fatal');
     }
 
     /**
@@ -297,7 +297,7 @@ export class WorkerRouter<E extends Env> {
     /** Router name for logging */
     name: string;
     /** Logger instance */
-    log: Loganite;
+    log: Logger;
     /** Underlying itty-router instance for path matching */
     router: ReturnType<typeof Router>;
     /** CORS configuration */
@@ -321,7 +321,7 @@ export class WorkerRouter<E extends Env> {
         this.name = name;
         this.corsConfig = options?.cors;
         this.router = Router(...args);
-        this.log = new Loganite(name, 'fatal');
+        this.log = new Logger(name, 'fatal');
     }
 
     /**
@@ -501,6 +501,7 @@ export class WorkerRouter<E extends Env> {
         // Create handler wrapper for each HTTP method
         const createMethodHandler = (method: 'get' | 'post' | 'put' | 'delete' | 'patch') => {
             return async (request: Request, env: E) => {
+                const start = Date.now();
                 const ctx = createContext<E, P, D>(
                     request,
                     env,
@@ -508,7 +509,10 @@ export class WorkerRouter<E extends Env> {
                     this.log
                 );
                 if (env.LOG_LEVEL) ctx.log.setLevel(env.LOG_LEVEL);
-                ctx.log.trace(`Incoming request %s '%s'`, request.method, request.url);
+
+                const url = new URL(request.url);
+                ctx.log.trace('Incoming request', { method: request.method, path: url.pathname });
+                ctx.log.debug('Route matched', { path, params: ctx.params });
 
                 // Get CORS config for this handler
                 const handlerCorsConfig = handler.cors(ctx);
@@ -516,19 +520,31 @@ export class WorkerRouter<E extends Env> {
 
                 // Build the middleware chain
                 const matchingMiddlewares = this.getMatchingMiddlewares(request, path);
+                ctx.log.trace('Middleware chain', { count: matchingMiddlewares.length });
 
                 // Final handler that calls the route handler method
                 const finalHandler: Middleware<E, P, D> = async (ctx) => {
+                    ctx.log.trace('Executing handler', { method });
                     const result = await handler[method](ctx);
                     return buildResponse(result, ctx, effectiveCorsConfig);
                 };
 
                 // Execute the chain
-                return this.executeChain(
+                const response = await this.executeChain(
                     ctx,
                     [...matchingMiddlewares, finalHandler],
                     effectiveCorsConfig
                 );
+
+                const duration = Date.now() - start;
+                ctx.log.info('Request completed', {
+                    method: request.method,
+                    path: url.pathname,
+                    status: response.status,
+                    duration,
+                });
+
+                return response;
             };
         };
 
@@ -684,7 +700,7 @@ export interface DurableObjectContext<P = Params, D = Record<string, any>> {
     response: ResponseContext;
 
     /** Logger instance */
-    log: Loganite;
+    log: Logger;
 }
 
 /**
@@ -694,7 +710,7 @@ export interface DurableObjectContext<P = Params, D = Record<string, any>> {
 export function createDurableObjectContext<P extends Params, D = Record<string, any>>(
     request: Request,
     params: P,
-    log: Loganite
+    log: Logger
 ): DurableObjectContext<P, D> {
     return {
         request,
@@ -771,7 +787,7 @@ export abstract class DurableObjectRouteHandler<
     D = Record<string, any>,
 > {
     protected path: string;
-    log: Loganite;
+    log: Logger;
 
     /** The raw DurableObjectState - use for blockConcurrencyWhile, etc. */
     state: DurableObjectState;
@@ -785,7 +801,7 @@ export abstract class DurableObjectRouteHandler<
     /** Environment bindings */
     env: E;
 
-    constructor(doState: DurableObjectState, env: E, path: string, options?: { log?: Loganite }) {
+    constructor(doState: DurableObjectState, env: E, path: string, options?: { log?: Logger }) {
         this.state = doState;
         this.storage = doState.storage;
         this.id = doState.id;
@@ -793,7 +809,7 @@ export abstract class DurableObjectRouteHandler<
         this.path = path;
 
         if (options?.log) this.log = options.log;
-        else this.log = new Loganite(path, 'fatal');
+        else this.log = new Logger(path, 'fatal');
     }
 
     /**
@@ -874,7 +890,7 @@ interface DurableObjectMiddlewareEntry {
  */
 export class DurableObjectRouter<E extends Env> {
     /** Logger instance */
-    log: Loganite;
+    log: Logger;
     /** Router name for logging */
     name: string;
     /** Underlying itty-router instance */
@@ -902,7 +918,7 @@ export class DurableObjectRouter<E extends Env> {
         this.env = env;
         this.corsConfig = options?.cors;
         this.router = Router(...args);
-        this.log = new Loganite(name, 'fatal');
+        this.log = new Logger(name, 'fatal');
         if (env.LOG_LEVEL) this.log.setLevel(env.LOG_LEVEL);
     }
 
@@ -1011,7 +1027,7 @@ export class DurableObjectRouter<E extends Env> {
             doState: DurableObjectState,
             env: E,
             path: string,
-            options?: { log?: Loganite }
+            options?: { log?: Logger }
         ) => DurableObjectRouteHandler<E, P, D>
     ): DurableObjectRouter<E> {
         const handler = new handler_cls(this.doState, this.env, path, {
@@ -1042,27 +1058,44 @@ export class DurableObjectRouter<E extends Env> {
         // Create handler wrapper for each HTTP method
         const createMethodHandler = (method: 'get' | 'post' | 'put' | 'delete' | 'patch') => {
             return async (request: Request) => {
+                const start = Date.now();
                 const ctx = createDurableObjectContext<P, D>(
                     request,
                     (request.params || {}) as P,
                     this.log
                 );
 
+                const url = new URL(request.url);
+                ctx.log.trace('Incoming request', { method: request.method, path: url.pathname });
+                ctx.log.debug('Route matched', { path, params: ctx.params });
+
                 const handlerCorsConfig = handler.cors(ctx);
                 const effectiveCorsConfig = handlerCorsConfig ?? this.corsConfig;
 
                 const matchingMiddlewares = this.getMatchingMiddlewares(request, path);
+                ctx.log.trace('Middleware chain', { count: matchingMiddlewares.length });
 
                 const finalHandler: DurableObjectMiddleware<P, D> = async (ctx, state) => {
+                    ctx.log.trace('Executing handler', { method });
                     const result = await handler[method](ctx);
                     return buildResponse(result, ctx, effectiveCorsConfig);
                 };
 
-                return this.executeChain(
+                const response = await this.executeChain(
                     ctx,
                     [...matchingMiddlewares, finalHandler],
                     effectiveCorsConfig
                 );
+
+                const duration = Date.now() - start;
+                ctx.log.info('Request completed', {
+                    method: request.method,
+                    path: url.pathname,
+                    status: response.status,
+                    duration,
+                });
+
+                return response;
             };
         };
 

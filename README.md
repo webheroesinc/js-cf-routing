@@ -216,6 +216,56 @@ class ApiHandler extends RouteHandler<Env> {
 
 CORS headers are automatically consistent between OPTIONS preflight and actual responses.
 
+### Logging
+
+The router includes a built-in `Logger` that integrates with Cloudflare's observability dashboard. Set the log level via the `LOG_LEVEL` environment variable.
+
+**Log Levels** (from most to least verbose):
+- `trace` - Detailed request flow (incoming request, middleware chain, handler execution)
+- `debug` - Route matching with params
+- `info` - Request completed with status and duration
+- `warn` - Warnings
+- `error` - Errors
+- `fatal` - Critical errors
+
+**Built-in Logging**
+
+The router automatically logs at these levels:
+```
+[router-name] [TRACE] Incoming request {"method":"GET","path":"/users/123"}
+[router-name] Route matched {"path":"/users/:id","params":{"id":"123"}}
+[router-name] [TRACE] Middleware chain {"count":2}
+[router-name] [TRACE] Executing handler {"method":"get"}
+[router-name] Request completed {"method":"GET","path":"/users/123","status":200,"duration":45}
+```
+
+**Using the Logger**
+
+Access `ctx.log` in handlers and middleware with structured data:
+
+```typescript
+async get(ctx: Context<Env, { id: string }>) {
+    ctx.log.info('Fetching user', { userId: ctx.params.id });
+
+    const user = await getUser(ctx.params.id);
+    if (!user) {
+        ctx.log.warn('User not found', { userId: ctx.params.id });
+        throw new HttpError(404, 'User not found');
+    }
+
+    return user;
+}
+```
+
+**Configuration**
+
+Set `LOG_LEVEL` in your wrangler.toml:
+
+```toml
+[vars]
+LOG_LEVEL = "info"  # or "debug", "trace", etc.
+```
+
 ## Documentation
 
 **https://webheroesinc.github.io/js-cf-routing/**

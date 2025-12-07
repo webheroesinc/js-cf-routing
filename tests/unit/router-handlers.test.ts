@@ -1,21 +1,21 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildResponse, buildErrorResponse, Env, Context, Params } from '../../src/router';
 import { HttpError, ResponseContext } from '../../src/index';
-import Loganite from 'loganite';
+import { Logger } from '../../src/logger';
 
 // Helper to create a mock context
-function createMockContext<E extends Env = Env, P extends Params = Params, S = Record<string, any>>(
+function createMockContext<E extends Env = Env, P extends Params = Params, D = Record<string, any>>(
     request: Request,
     env: E,
     params: P = {} as P
-): Context<E, P, S> {
+): Context<E, P, D> {
     return {
         request,
         env,
         params,
-        state: {} as S,
+        data: {} as D,
         response: new ResponseContext(),
-        log: new Loganite('test', 'fatal'),
+        log: new Logger('test', 'fatal'),
     };
 }
 

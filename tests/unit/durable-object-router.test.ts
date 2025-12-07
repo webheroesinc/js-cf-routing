@@ -7,7 +7,7 @@ import {
     Env,
 } from '../../src/router';
 import { HttpError, ResponseContext } from '../../src/index';
-import Loganite from 'loganite';
+import { Logger } from '../../src/logger';
 
 // Mock DurableObjectState
 const createMockState = (): DurableObjectState => ({
@@ -37,7 +37,7 @@ function createMockDOContext<
         params,
         data: {} as D,
         response: new ResponseContext(),
-        log: new Loganite('test', 'fatal'),
+        log: new Logger('test', 'fatal'),
     };
 }
 
@@ -708,7 +708,7 @@ describe('DurableObjectContext', () => {
         expect(ctx.params).toEqual({});
         expect(ctx.data).toEqual({});
         expect(ctx.response).toBeInstanceOf(ResponseContext);
-        expect(ctx.log).toBeInstanceOf(Loganite);
+        expect(ctx.log).toBeInstanceOf(Logger);
     });
 
     it('should allow setting params', () => {

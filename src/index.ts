@@ -22,6 +22,7 @@
 
 export * from './context.js';
 export * from './cors.js';
+export * from './logger.js';
 export * from './router.js';
 export * from './response-context.js';
 export { HttpError } from '@whi/http-errors';

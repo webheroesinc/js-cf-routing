@@ -9,7 +9,7 @@ import {
 } from '../../src/router';
 import { HttpError } from '../../src/index';
 import { ResponseContext } from '../../src/response-context';
-import Loganite from 'loganite';
+import { Logger } from '../../src/logger';
 
 // Helper to create a mock context for testing handlers directly
 function createMockContext<
@@ -23,7 +23,7 @@ function createMockContext<
         params,
         data: {} as D,
         response: new ResponseContext(),
-        log: new Loganite('test', 'fatal'),
+        log: new Logger('test', 'fatal'),
     };
 }
 

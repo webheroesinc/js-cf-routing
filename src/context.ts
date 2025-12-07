@@ -1,5 +1,5 @@
 import { ResponseContext } from './response-context.js';
-import Loganite from 'loganite';
+import { Logger } from './logger.js';
 
 /**
  * Route parameters extracted from URL path
@@ -65,7 +65,7 @@ export interface Context<E = Env, P = Params, D = Record<string, any>> {
     response: ResponseContext;
 
     /** Logger instance */
-    log: Loganite;
+    log: Logger;
 }
 
 /**
