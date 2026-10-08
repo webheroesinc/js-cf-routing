@@ -30,7 +30,8 @@
     "check": "npm run typecheck && npm run format:check",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "prepare": "git config core.hooksPath .githooks"
   },
   "author": "Matthew Brisebois",
   "license": "LGPL-3.0",
