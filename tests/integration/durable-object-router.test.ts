@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { setupDurableObjectRouter, DurableObjectFixture } from '../setup';
+import { setupDurableObjectRouter, DurableObjectFixture } from '../setup.js';
 
 /**
  * Minimal integration smoke tests for DurableObjectRouter
@@ -23,7 +23,7 @@ describe('DurableObjectRouter Integration Smoke Tests', () => {
         const response = await worker.mf.dispatchFetch('http://localhost/info');
 
         expect(response.status).toBe(200);
-        const data = await response.json<{ name: string }>();
+        const data = (await response.json()) as { name: string };
         expect(data.name).toBe('Counter Durable Object');
     });
 
@@ -42,7 +42,7 @@ describe('DurableObjectRouter Integration Smoke Tests', () => {
 
         // Verify persistence
         const response = await worker.mf.dispatchFetch('http://localhost/count');
-        const data = await response.json<{ count: number }>();
+        const data = (await response.json()) as { count: number };
         expect(data.count).toBe(5);
     });
 
@@ -54,7 +54,7 @@ describe('DurableObjectRouter Integration Smoke Tests', () => {
         });
 
         expect(response.status).toBe(200);
-        const data = await response.json<{ key: string; value: string }>();
+        const data = (await response.json()) as { key: string; value: string };
         expect(data.key).toBe('testkey');
         expect(data.value).toBe('testvalue');
     });

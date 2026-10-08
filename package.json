@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "typecheck": "npm run build && tsc --noEmit -p tsconfig.typecheck.json",
     "build:test-worker": "esbuild tests/fixtures/worker-router-test.ts --bundle --format=esm --outfile=tests/fixtures/dist/worker-router-test.js --external:node:*",
     "build:test-do": "esbuild tests/fixtures/durable-object-router-test.ts --bundle --format=esm --outfile=tests/fixtures/dist/durable-object-router-test.js --external:node:*",
     "build:tests": "npm run build:test-worker && npm run build:test-do",
@@ -27,6 +28,7 @@
     "test:coverage": "vitest run --coverage",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "check": "npm run typecheck && npm run format:check",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch"
   },

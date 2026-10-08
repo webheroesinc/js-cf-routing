@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { buildResponse, buildErrorResponse, Env, Context, Params } from '../../src/router';
-import { HttpError, ResponseContext } from '../../src/index';
-import { Logger } from '../../src/logger';
+import { buildResponse, buildErrorResponse, Env, Context, Params } from '../../src/router.js';
+import { HttpError, ResponseContext } from '../../src/index.js';
+import { Logger } from '../../src/logger.js';
 
 // Helper to create a mock context
 function createMockContext<E extends Env = Env, P extends Params = Params, D = Record<string, any>>(
@@ -137,7 +137,9 @@ describe('buildErrorResponse', () => {
             LOG_LEVEL: 'fatal',
         });
         const response = buildErrorResponse(
-            new HttpError(401, 'Session expired', null, { 'Set-Cookie': 'session=; Max-Age=0' }),
+            new HttpError(401, 'Session expired', undefined, {
+                'Set-Cookie': 'session=; Max-Age=0',
+            }),
             ctx
         );
 
