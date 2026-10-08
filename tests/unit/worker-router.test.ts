@@ -874,3 +874,61 @@ describe('Middleware with next() pattern', () => {
         expect(executionOrder).toEqual(['middleware']);
     });
 });
+
+describe('Route parameter decoding', () => {
+    let router: WorkerRouter<Env>;
+    let handlerCalls: number;
+    let middlewareCalls: number;
+
+    beforeEach(() => {
+        handlerCalls = 0;
+        middlewareCalls = 0;
+
+        class ItemHandler extends RouteHandler<Env, { id: string }> {
+            async get(ctx: Context<Env, { id: string }>) {
+                handlerCalls++;
+                return { id: ctx.params.id };
+            }
+        }
+
+        router = new WorkerRouter<Env>('test', {
+            cors: { origins: ['https://app.example.com'] },
+        });
+        router.log.setLevel('fatal');
+        router.use(async (ctx, next) => {
+            middlewareCalls++;
+            return next();
+        });
+        router.defineRouteHandler('/items/:id', ItemHandler);
+    });
+
+    async function get(segment: string) {
+        return router.build().fetch(
+            new Request('https://example.com/items/' + segment, {
+                headers: { Origin: 'https://app.example.com' },
+            }),
+            { LOG_LEVEL: 'fatal' }
+        );
+    }
+
+    it.each([
+        ['dGVzdA==', 'dGVzdA=='],
+        ['dGVzdA%3D%3D', 'dGVzdA=='],
+        ['a%2Fb', 'a/b'],
+        ['%253D', '%3D'],
+    ])('should decode %s to %s', async (segment, expected) => {
+        const response = await get(segment);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ id: expected });
+    });
+
+    it('should answer 400 with CORS headers on a malformed escape, before middleware runs', async () => {
+        const response = await get('a%E0');
+
+        expect(response.status).toBe(400);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
+        expect(handlerCalls).toBe(0);
+        expect(middlewareCalls).toBe(0);
+    });
+});

@@ -732,3 +732,47 @@ describe('DurableObjectContext', () => {
         expect(ctx.data.userId).toBe('user-456');
     });
 });
+
+describe('DurableObjectRouter route parameter decoding', () => {
+    let router: DurableObjectRouter<Env>;
+    let handlerCalls: number;
+    let middlewareCalls: number;
+
+    beforeEach(() => {
+        handlerCalls = 0;
+        middlewareCalls = 0;
+
+        class ItemHandler extends DurableObjectRouteHandler<Env, { id: string }> {
+            async get(ctx: DurableObjectContext<{ id: string }>) {
+                handlerCalls++;
+                return { id: ctx.params.id };
+            }
+        }
+
+        router = new DurableObjectRouter(createMockState(), { LOG_LEVEL: 'fatal' }, 'test');
+        router.log.setLevel('fatal');
+        router.use(async (ctx, state, next) => {
+            middlewareCalls++;
+            return next();
+        });
+        router.defineRouteHandler('/items/:id', ItemHandler);
+    });
+
+    it.each([
+        ['dGVzdA%3D%3D', 'dGVzdA=='],
+        ['a%2Fb', 'a/b'],
+    ])('should decode %s to %s', async (segment, expected) => {
+        const response = await router.handle(new Request('https://example.com/items/' + segment));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ id: expected });
+    });
+
+    it('should answer 400 on a malformed escape, before middleware runs', async () => {
+        const response = await router.handle(new Request('https://example.com/items/a%E0'));
+
+        expect(response.status).toBe(400);
+        expect(handlerCalls).toBe(0);
+        expect(middlewareCalls).toBe(0);
+    });
+});

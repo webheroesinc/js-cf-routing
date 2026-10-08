@@ -99,7 +99,7 @@ router.defineRouteHandler('/users/:id', UserHandler);
 The `ctx` object contains:
 - `ctx.request` - The incoming Request
 - `ctx.env` - Environment bindings (Worker handlers only)
-- `ctx.params` - Route parameters (e.g., `{ id: '123' }`)
+- `ctx.params` - Route parameters, percent-decoded (e.g., `{ id: '123' }`); a malformed escape is rejected with 400 before middleware runs
 - `ctx.data` - Shared data for middleware communication
 - `ctx.response` - Response customization (status, headers)
 - `ctx.log` - Logger instance
