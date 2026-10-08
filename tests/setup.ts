@@ -1,11 +1,10 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import { Miniflare } from 'miniflare';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Resolve paths relative to this file without Node's path/url modules, whose types
+// would clash with the Workers types the tests are checked against
+const resolve = (relative: string) => new URL(relative, import.meta.url).pathname;
 
 export interface WorkerTestEnv {
     LOG_LEVEL: string;
@@ -19,11 +18,11 @@ export interface WorkerFixture {
 export async function setupWorkerRouter(): Promise<WorkerFixture> {
     const mf = new Miniflare({
         modules: true,
-        scriptPath: path.join(__dirname, 'fixtures/dist/worker-router-test.js'),
+        scriptPath: resolve('fixtures/dist/worker-router-test.js'),
         bindings: {
             LOG_LEVEL: 'fatal',
         },
-        modulesRoot: path.join(__dirname, '..'),
+        modulesRoot: resolve('..'),
     });
 
     return {
@@ -46,14 +45,14 @@ export interface DurableObjectFixture {
 export async function setupDurableObjectRouter(): Promise<DurableObjectFixture> {
     const mf = new Miniflare({
         modules: true,
-        scriptPath: path.join(__dirname, 'fixtures/dist/durable-object-router-test.js'),
+        scriptPath: resolve('fixtures/dist/durable-object-router-test.js'),
         bindings: {
             LOG_LEVEL: 'fatal',
         },
         durableObjects: {
             COUNTER: 'Counter',
         },
-        modulesRoot: path.join(__dirname, '..'),
+        modulesRoot: resolve('..'),
     });
 
     const COUNTER = (await mf.getDurableObjectNamespace(

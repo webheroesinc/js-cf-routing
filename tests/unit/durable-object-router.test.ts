@@ -5,27 +5,28 @@ import {
     DurableObjectContext,
     DurableObjectMiddleware,
     Env,
-} from '../../src/router';
-import { HttpError, ResponseContext } from '../../src/index';
-import { Logger } from '../../src/logger';
+} from '../../src/router.js';
+import { HttpError, ResponseContext } from '../../src/index.js';
+import { Logger } from '../../src/logger.js';
 
-// Mock DurableObjectState
-const createMockState = (): DurableObjectState => ({
-    id: {
-        toString: () => 'test-id',
-        equals: () => false,
-        name: 'test-name',
-    } as DurableObjectId,
-    storage: {
-        get: vi.fn(),
-        put: vi.fn(),
-        delete: vi.fn(),
-        list: vi.fn(),
-    } as unknown as DurableObjectStorage,
-    blockConcurrencyWhile: vi.fn(async (callback: () => Promise<void>) => callback()),
-    waitUntil: vi.fn(),
-    abort: vi.fn(),
-});
+// Mock DurableObjectState (only the members the router uses)
+const createMockState = (): DurableObjectState =>
+    ({
+        id: {
+            toString: () => 'test-id',
+            equals: () => false,
+            name: 'test-name',
+        } as DurableObjectId,
+        storage: {
+            get: vi.fn(),
+            put: vi.fn(),
+            delete: vi.fn(),
+            list: vi.fn(),
+        } as unknown as DurableObjectStorage,
+        blockConcurrencyWhile: vi.fn(async (callback: () => Promise<void>) => callback()),
+        waitUntil: vi.fn(),
+        abort: vi.fn(),
+    }) as unknown as DurableObjectState;
 
 // Helper to create a mock DurableObjectContext (per-request data only)
 function createMockDOContext<
@@ -633,7 +634,7 @@ describe('DurableObjectRouteHandler', () => {
 
     it('should allow subclass to implement GET', async () => {
         class CustomDOHandler extends DurableObjectRouteHandler<Env> {
-            async get() {
+            async get(ctx: DurableObjectContext) {
                 return { message: 'DO custom GET' };
             }
         }

@@ -1,0 +1,85 @@
+name: Publish
+
+# Runs when a release lands on master. Uses npm trusted publishing (OIDC, no stored
+# token; provenance is automatic) to STAGE the release — it does not go live. A
+# maintainer then promotes it with 2FA (`npm stage approve`, or on npmjs.com), which
+# is the human gate. Auto-triggers on merge; no GitHub approval step.
+#
+# Idempotent via the git tag: staged versions are not visible to `npm view`, so the
+# tag (created at stage time) is what marks "this version has been cut", making
+# ordinary pushes to master safe.
+#
+# The docs site redeploys when a release is staged rather than on every push, so it
+# never describes unreleased changes (it can lead npm by the time the stage takes to
+# approve).
+on:
+    push:
+        branches: [master]
+
+permissions:
+    id-token: write # OIDC — npm authenticates with no stored token
+    contents: write # push the release tag
+
+jobs:
+    publish:
+        runs-on: ubuntu-latest
+        environment: production # required by the npm trusted-publisher config (OIDC claim); no reviewer
+        outputs:
+            skip: ${{ steps.check.outputs.skip }}
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  fetch-depth: 0
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v5
+              with:
+                  node-version-file: .nvmrc
+                  registry-url: https://registry.npmjs.org
+
+            - name: Update npm (trusted publishing / staging needs >= 11.5.1)
+              run: npm install -g npm@latest
+
+            - name: Determine version and whether it is already cut
+              id: check
+              run: |
+                  VER="$(node -p "require('./package.json').version")"
+                  TAG="v$VER"
+                  echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+                  # A prerelease (1.0.0-alpha.1) goes out under the `next` dist-tag so
+                  # a plain `npm install` keeps resolving to the latest stable release.
+                  case "$VER" in
+                    *-*) echo "dist_tag=next" >> "$GITHUB_OUTPUT" ;;
+                    *) echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
+                  esac
+                  if git rev-parse "$TAG" >/dev/null 2>&1; then
+                    echo "$TAG already exists; nothing to stage."
+                    echo "skip=true" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Install dependencies
+              if: steps.check.outputs.skip != 'true'
+              run: npm ci
+
+            - name: Build and test
+              if: steps.check.outputs.skip != 'true'
+              run: npm run check && npm test
+
+            - name: Stage the release (promote later with `npm stage approve`)
+              if: steps.check.outputs.skip != 'true'
+              run: npm stage publish --tag "${{ steps.check.outputs.dist_tag }}"
+
+            - name: Tag the release
+              if: steps.check.outputs.skip != 'true'
+              run: |
+                  git tag "${{ steps.check.outputs.tag }}"
+                  git push origin "${{ steps.check.outputs.tag }}"
+
+    docs:
+        needs: publish
+        if: needs.publish.outputs.skip != 'true'
+        uses: ./.github/workflows/docs.yml
+        permissions:
+            contents: read
+            pages: write
+            id-token: write

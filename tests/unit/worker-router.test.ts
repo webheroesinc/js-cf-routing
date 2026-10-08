@@ -6,10 +6,10 @@ import {
     Context,
     Middleware,
     createContext,
-} from '../../src/router';
-import { HttpError } from '../../src/index';
-import { ResponseContext } from '../../src/response-context';
-import { Logger } from '../../src/logger';
+} from '../../src/router.js';
+import { HttpError } from '../../src/index.js';
+import { ResponseContext } from '../../src/response-context.js';
+import { Logger } from '../../src/logger.js';
 
 // Helper to create a mock context for testing handlers directly
 function createMockContext<
@@ -384,13 +384,13 @@ describe('RouteHandler', () => {
 
         // First request
         const response1 = await builtRouter.fetch(request, env);
-        const body1 = await response1.json();
+        const body1 = await response1.json<{ wasDefault: boolean }>();
         expect(body1.wasDefault).toBe(true);
         expect(response1.status).toBe(201);
 
         // Second request - should have fresh context with default status
         const response2 = await builtRouter.fetch(request, env);
-        const body2 = await response2.json();
+        const body2 = await response2.json<{ wasDefault: boolean }>();
         expect(body2.wasDefault).toBe(true);
         expect(response2.status).toBe(201);
     });
