@@ -20,7 +20,6 @@
     "build:tests": "npm run build:test-worker && npm run build:test-do",
     "prebuild:tests": "npm run build",
     "pretest": "npm run build:tests",
-    "prepublishOnly": "npm run build && npm test",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
@@ -30,7 +29,8 @@
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm run format:check",
     "docs": "typedoc",
-    "docs:watch": "typedoc --watch"
+    "docs:watch": "typedoc --watch",
+    "prepack": "npm run build"
   },
   "author": "Matthew Brisebois",
   "license": "LGPL-3.0",

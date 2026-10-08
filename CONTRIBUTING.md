@@ -19,6 +19,9 @@ npm run test:watch
 
 # Run tests with coverage
 npm run test:coverage
+
+# Typecheck (src, tests and fixtures) and check formatting, as CI does
+npm run check
 ```
 
 ## Project Structure
@@ -225,7 +228,7 @@ These improvements would increase confidence that consumers can replicate docume
 
 API documentation is automatically generated from TypeScript source code and JSDoc comments using TypeDoc.
 
-- Documentation is auto-deployed to GitHub Pages on every push to master
+- Documentation is deployed to GitHub Pages when a release is published (see Branches and Releases)
 - View live docs at: https://webheroesinc.github.io/js-cf-routing/
 - Generate locally: `npm run docs`
 
@@ -235,16 +238,31 @@ When adding or modifying public APIs:
 3. Include code examples in `@example` blocks
 4. Run `npm run docs` to verify the output
 
+## Branches and Releases
+
+Work goes in pull requests to `develop`. CI runs format, typecheck and tests,
+and they must pass to merge. A release is a pull request from `develop` to
+`master`; CI fails it if `version` in `package.json` already has a
+`v<version>` tag. Bump it with `npm version <x.y.z> --no-git-tag-version`: the
+publish workflow creates the tag, and a tag made locally would make it skip
+the release.
+
+Merging to `master` runs `.github/workflows/publish.yml`, which stages the
+release on npm with trusted publishing, tags it and redeploys the docs.
+Nothing is live until a maintainer approves the staged release with 2FA
+(`npm stage approve`, or on npmjs.com). Prereleases (`1.0.0-alpha.1`) go out
+under the `next` dist-tag. Record each release in `CHANGELOG.md`.
+
 ## Submitting Changes
 
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch from `develop`
 3. Make your changes
 4. Add JSDoc comments for any new public APIs
-5. Run tests: `npm test`
-6. Format code: `npm run format`
+5. Run `npm run check` and `npm test`
+6. Add an entry under `[Unreleased]` in `CHANGELOG.md` for user-visible changes
 7. Commit with clear messages
-8. Submit a pull request
+8. Submit a pull request to `develop`
 
 ## Questions?
 
