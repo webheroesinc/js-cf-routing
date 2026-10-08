@@ -147,6 +147,30 @@ export function createContext<E extends Env, P extends Params, D = Record<string
 }
 
 /**
+ * Percent-decode route parameter values.
+ *
+ * itty-router matches against the encoded pathname and leaves captured groups encoded.
+ * Decoding per-param (after the path is split) keeps an encoded `%2F` inside its parameter.
+ *
+ * Returns an error instead of throwing so callers can answer 400 through their normal
+ * error response path; on failure, `params` holds the raw values.
+ */
+export function decodeParams<P extends Params>(params: P): { params: P; error?: HttpError } {
+    const decoded: Params = {};
+    for (const [key, value] of Object.entries(params)) {
+        try {
+            decoded[key] = decodeURIComponent(value);
+        } catch {
+            return {
+                params,
+                error: new HttpError(400, `Malformed percent-encoding in route parameter '${key}'`),
+            };
+        }
+    }
+    return { params: decoded as P };
+}
+
+/**
  * Base class for route handlers in WorkerRouter
  *
  * Extend this class to create handlers for specific routes. By default, all HTTP methods
@@ -491,12 +515,8 @@ export class WorkerRouter<E extends Env> {
         ) => {
             return async (request: Request, env: E) => {
                 const start = Date.now();
-                const ctx = createContext<E, P, D>(
-                    request,
-                    env,
-                    (request.params || {}) as P,
-                    this.log
-                );
+                const decoded = decodeParams((request.params || {}) as P);
+                const ctx = createContext<E, P, D>(request, env, decoded.params, this.log);
                 if (env.LOG_LEVEL) ctx.log.setLevel(env.LOG_LEVEL);
 
                 const url = new URL(request.url);
@@ -538,12 +558,14 @@ export class WorkerRouter<E extends Env> {
                     return buildResponse(result, ctx, effectiveCorsConfig, corsCtx);
                 };
 
-                // Execute the chain
-                const response = await this.executeChain(
-                    ctx,
-                    [...matchingMiddlewares, finalHandler],
-                    effectiveCorsConfig
-                );
+                // Reject malformed params before any middleware sees them
+                const response = decoded.error
+                    ? buildErrorResponse(decoded.error, ctx, effectiveCorsConfig, corsCtx)
+                    : await this.executeChain(
+                          ctx,
+                          [...matchingMiddlewares, finalHandler],
+                          effectiveCorsConfig
+                      );
 
                 const duration = Date.now() - start;
                 ctx.log.info('Request completed', {
@@ -1100,11 +1122,8 @@ export class DurableObjectRouter<E extends Env> {
         ) => {
             return async (request: Request) => {
                 const start = Date.now();
-                const ctx = createDurableObjectContext<P, D>(
-                    request,
-                    (request.params || {}) as P,
-                    this.log
-                );
+                const decoded = decodeParams((request.params || {}) as P);
+                const ctx = createDurableObjectContext<P, D>(request, decoded.params, this.log);
 
                 const url = new URL(request.url);
                 ctx.log.trace('Incoming request', { method: request.method, path: url.pathname });
@@ -1143,12 +1162,15 @@ export class DurableObjectRouter<E extends Env> {
                     return buildResponse(result, ctx, effectiveCorsConfig, corsCtx);
                 };
 
-                const response = await this.executeChain(
-                    ctx,
-                    [...matchingMiddlewares, finalHandler],
-                    effectiveCorsConfig,
-                    corsCtx
-                );
+                // Reject malformed params before any middleware sees them
+                const response = decoded.error
+                    ? buildErrorResponse(decoded.error, ctx, effectiveCorsConfig, corsCtx)
+                    : await this.executeChain(
+                          ctx,
+                          [...matchingMiddlewares, finalHandler],
+                          effectiveCorsConfig,
+                          corsCtx
+                      );
 
                 const duration = Date.now() - start;
                 ctx.log.info('Request completed', {
