@@ -1,5 +1,5 @@
 import { HttpError } from '@whi/http-errors';
-import { Router } from 'itty-router';
+import { Router, IRequest, RouterOptions, RouterType } from 'itty-router';
 import { corsHeaders, CorsConfig, CorsOriginContext, buildCorsHeaders } from './cors.js';
 import { ResponseContext } from './response-context.js';
 import { Context, Middleware, Params, Env } from './context.js';
@@ -252,12 +252,13 @@ export abstract class RouteHandler<
  *
  * @category Types
  */
-export interface WorkerRouterOptions {
+export interface WorkerRouterOptions<E = unknown> {
     /**
      * CORS configuration for the router.
      * If not provided, default CORS headers (without Access-Control-Allow-Origin) are used.
+     * `data` is typed `any`: it holds whatever the matched route's middleware set.
      */
-    cors?: CorsConfig;
+    cors?: CorsConfig<E, any>;
 }
 
 /**
@@ -303,9 +304,9 @@ export class WorkerRouter<E extends Env> {
     /** Logger instance */
     log: Logger;
     /** Underlying itty-router instance for path matching */
-    router: ReturnType<typeof Router>;
+    router: RouterType<IRequest, any[], Response>;
     /** CORS configuration */
-    corsConfig?: CorsConfig;
+    corsConfig?: CorsConfig<E, any>;
     /** Registered middlewares */
     private middlewares: MiddlewareEntry<E>[] = [];
     /** Whether the router has been built */
@@ -319,12 +320,12 @@ export class WorkerRouter<E extends Env> {
      */
     constructor(
         name: string = 'unnamed',
-        options?: WorkerRouterOptions,
-        ...args: Parameters<typeof Router>
+        options?: WorkerRouterOptions<E>,
+        ...args: [RouterOptions<IRequest, any[]>?]
     ) {
         this.name = name;
         this.corsConfig = options?.cors;
-        this.router = Router(...args);
+        this.router = Router<IRequest, any[], Response>(...args);
         this.log = new Logger(name, 'fatal');
     }
 
@@ -904,12 +905,13 @@ export abstract class DurableObjectRouteHandler<
  *
  * @category Types
  */
-export interface DurableObjectRouterOptions {
+export interface DurableObjectRouterOptions<E = unknown> {
     /**
      * CORS configuration for the router.
      * If not provided, default CORS headers (without Access-Control-Allow-Origin) are used.
+     * `data` is typed `any`: it holds whatever the matched route's middleware set.
      */
-    cors?: CorsConfig;
+    cors?: CorsConfig<E, any>;
 }
 
 /**
@@ -952,13 +954,13 @@ export class DurableObjectRouter<E extends Env> {
     /** Router name for logging */
     name: string;
     /** Underlying itty-router instance */
-    router: ReturnType<typeof Router>;
+    router: RouterType<IRequest, any[], Response>;
     /** Durable Object state */
     doState: DurableObjectState;
     /** Environment bindings */
     env: E;
     /** CORS configuration */
-    corsConfig?: CorsConfig;
+    corsConfig?: CorsConfig<E, any>;
     /** Registered middlewares */
     private middlewares: DurableObjectMiddlewareEntry[] = [];
     /** Whether the router has been built */
@@ -968,14 +970,14 @@ export class DurableObjectRouter<E extends Env> {
         doState: DurableObjectState,
         env: E,
         name: string,
-        options?: DurableObjectRouterOptions,
-        ...args: Parameters<typeof Router>
+        options?: DurableObjectRouterOptions<E>,
+        ...args: [RouterOptions<IRequest, any[]>?]
     ) {
         this.name = name;
         this.doState = doState;
         this.env = env;
         this.corsConfig = options?.cors;
-        this.router = Router(...args);
+        this.router = Router<IRequest, any[], Response>(...args);
         this.log = new Logger(name, 'fatal');
         if (env.LOG_LEVEL) this.log.setLevel(env.LOG_LEVEL);
     }
