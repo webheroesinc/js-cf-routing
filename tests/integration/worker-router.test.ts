@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { setupWorkerRouter, WorkerFixture } from '../setup';
+import { setupWorkerRouter, WorkerFixture } from '../setup.js';
 
 /**
  * Minimal integration smoke tests for WorkerRouter
@@ -25,7 +25,7 @@ describe('WorkerRouter Integration Smoke Tests', () => {
         expect(response.status).toBe(200);
         expect(response.headers.get('Content-Type')).toBe('application/json');
 
-        const data = await response.json<{ status: string }>();
+        const data = (await response.json()) as { status: string };
         expect(data.status).toBe('healthy');
     });
 
@@ -33,7 +33,7 @@ describe('WorkerRouter Integration Smoke Tests', () => {
         const response = await worker.mf.dispatchFetch('http://localhost/users/123');
 
         expect(response.status).toBe(200);
-        const data = await response.json<{ user_id: string }>();
+        const data = (await response.json()) as { user_id: string };
         expect(data.user_id).toBe('123');
     });
 
@@ -41,7 +41,7 @@ describe('WorkerRouter Integration Smoke Tests', () => {
         const response = await worker.mf.dispatchFetch('http://localhost/error');
 
         expect(response.status).toBe(400);
-        const data = await response.json<{ error: string }>();
+        const data = (await response.json()) as { error: string };
         expect(data.error).toBe('Bad Request Error');
     });
 

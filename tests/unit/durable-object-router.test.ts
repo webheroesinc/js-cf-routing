@@ -5,27 +5,28 @@ import {
     DurableObjectContext,
     DurableObjectMiddleware,
     Env,
-} from '../../src/router';
-import { HttpError, ResponseContext } from '../../src/index';
-import { Logger } from '../../src/logger';
+} from '../../src/router.js';
+import { HttpError, ResponseContext } from '../../src/index.js';
+import { Logger } from '../../src/logger.js';
 
-// Mock DurableObjectState
-const createMockState = (): DurableObjectState => ({
-    id: {
-        toString: () => 'test-id',
-        equals: () => false,
-        name: 'test-name',
-    } as DurableObjectId,
-    storage: {
-        get: vi.fn(),
-        put: vi.fn(),
-        delete: vi.fn(),
-        list: vi.fn(),
-    } as unknown as DurableObjectStorage,
-    blockConcurrencyWhile: vi.fn(async (callback: () => Promise<void>) => callback()),
-    waitUntil: vi.fn(),
-    abort: vi.fn(),
-});
+// Mock DurableObjectState (only the members the router uses)
+const createMockState = (): DurableObjectState =>
+    ({
+        id: {
+            toString: () => 'test-id',
+            equals: () => false,
+            name: 'test-name',
+        } as DurableObjectId,
+        storage: {
+            get: vi.fn(),
+            put: vi.fn(),
+            delete: vi.fn(),
+            list: vi.fn(),
+        } as unknown as DurableObjectStorage,
+        blockConcurrencyWhile: vi.fn(async (callback: () => Promise<void>) => callback()),
+        waitUntil: vi.fn(),
+        abort: vi.fn(),
+    }) as unknown as DurableObjectState;
 
 // Helper to create a mock DurableObjectContext (per-request data only)
 function createMockDOContext<
@@ -633,7 +634,7 @@ describe('DurableObjectRouteHandler', () => {
 
     it('should allow subclass to implement GET', async () => {
         class CustomDOHandler extends DurableObjectRouteHandler<Env> {
-            async get() {
+            async get(ctx: DurableObjectContext) {
                 return { message: 'DO custom GET' };
             }
         }
@@ -729,5 +730,49 @@ describe('DurableObjectContext', () => {
 
         ctx.data.userId = 'user-456';
         expect(ctx.data.userId).toBe('user-456');
+    });
+});
+
+describe('DurableObjectRouter route parameter decoding', () => {
+    let router: DurableObjectRouter<Env>;
+    let handlerCalls: number;
+    let middlewareCalls: number;
+
+    beforeEach(() => {
+        handlerCalls = 0;
+        middlewareCalls = 0;
+
+        class ItemHandler extends DurableObjectRouteHandler<Env, { id: string }> {
+            async get(ctx: DurableObjectContext<{ id: string }>) {
+                handlerCalls++;
+                return { id: ctx.params.id };
+            }
+        }
+
+        router = new DurableObjectRouter(createMockState(), { LOG_LEVEL: 'fatal' }, 'test');
+        router.log.setLevel('fatal');
+        router.use(async (ctx, state, next) => {
+            middlewareCalls++;
+            return next();
+        });
+        router.defineRouteHandler('/items/:id', ItemHandler);
+    });
+
+    it.each([
+        ['dGVzdA%3D%3D', 'dGVzdA=='],
+        ['a%2Fb', 'a/b'],
+    ])('should decode %s to %s', async (segment, expected) => {
+        const response = await router.handle(new Request('https://example.com/items/' + segment));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ id: expected });
+    });
+
+    it('should answer 400 on a malformed escape, before middleware runs', async () => {
+        const response = await router.handle(new Request('https://example.com/items/a%E0'));
+
+        expect(response.status).toBe(400);
+        expect(handlerCalls).toBe(0);
+        expect(middlewareCalls).toBe(0);
     });
 });

@@ -1,0 +1,87 @@
+name: CI
+
+on:
+    pull_request:
+        branches: [master, develop]
+
+jobs:
+    format:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v5
+              with:
+                  node-version-file: .nvmrc
+                  cache: 'npm'
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Format check
+              run: npm run format:check
+
+    typecheck:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v5
+              with:
+                  node-version-file: .nvmrc
+                  cache: 'npm'
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Typecheck
+              run: npm run typecheck
+
+    # Only meaningful for a release (develop -> master), where a forgotten
+    # version bump must fail before merge. Skipped on develop PRs, where there
+    # is nothing to release and no bump is expected.
+    version-check:
+        runs-on: ubuntu-latest
+        if: github.base_ref == 'master'
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  fetch-depth: 0 # need tags to check whether this version is already released
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v5
+              with:
+                  node-version-file: .nvmrc
+
+            - name: Assert version is unreleased
+              run: node scripts/assert-version-unreleased.mjs
+
+    test:
+        runs-on: ubuntu-latest
+        # Run only once the quick checks pass, so a format, typecheck or (on
+        # master PRs) version-check failure fails the PR without waiting on the
+        # slower tests. The `if` lets tests still run when version-check is
+        # skipped (develop PRs) rather than being skipped too.
+        needs: [format, typecheck, version-check]
+        if: ${{ !failure() && !cancelled() }}
+        steps:
+            - uses: actions/checkout@v5
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v5
+              with:
+                  node-version-file: .nvmrc
+                  cache: 'npm'
+
+            - name: Install dependencies
+              run: npm ci
+
+            # Unit tests plus the Miniflare integration tests, which load the
+            # fixture Workers bundled by build:tests.
+            - name: Build test fixtures
+              run: npm run build:tests
+
+            - name: Tests with coverage
+              run: npm run test:coverage

@@ -1,14 +1,8 @@
 name: Deploy Documentation
 
+# Called by publish.yml when a release is staged; run by hand to redeploy.
 on:
-    push:
-        branches:
-            - master
-        paths:
-            - 'src/**'
-            - 'README.md'
-            - 'typedoc.json'
-            - 'package.json'
+    workflow_call:
     workflow_dispatch:
 
 permissions:
@@ -30,7 +24,7 @@ jobs:
             - name: Setup Node.js
               uses: actions/setup-node@v4
               with:
-                  node-version: '20'
+                  node-version-file: .nvmrc
                   cache: 'npm'
 
             - name: Install dependencies
