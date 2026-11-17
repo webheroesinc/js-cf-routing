@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Every cookie a handler appends with `ctx.response.headers.append('Set-Cookie', …)`
+  reaches the response; previously only the last one was sent, and the others
+  were dropped without any error. ([#9](https://github.com/webheroesinc/js-cf-routing/issues/9))
+
 ## [0.8.0] - 2026-10-08
 
 ### Changed

@@ -66,6 +66,18 @@ describe('buildResponse', () => {
         expect(response.headers.get('Set-Cookie')).toBe('session=abc123');
     });
 
+    it('should send every Set-Cookie appended to ctx.response', () => {
+        const ctx = createMockContext(new Request('https://example.com/test'), {
+            LOG_LEVEL: 'fatal',
+        });
+        ctx.response.headers.append('Set-Cookie', 'a=1; Path=/');
+        ctx.response.headers.append('Set-Cookie', 'b=2; Path=/');
+
+        const response = buildResponse({ data: 'test' }, ctx);
+
+        expect(response.headers.getSetCookie()).toEqual(['a=1; Path=/', 'b=2; Path=/']);
+    });
+
     it('should include CORS headers when configured', () => {
         const ctx = createMockContext(new Request('https://example.com/test'), {
             LOG_LEVEL: 'fatal',

@@ -137,6 +137,9 @@ async post(ctx: Context) {
 }
 ```
 
+To set more than one cookie, call `ctx.response.headers.append('Set-Cookie', ...)`
+for each; `set` replaces any cookie set before it.
+
 Or return a `Response` directly for full control:
 
 ```typescript
