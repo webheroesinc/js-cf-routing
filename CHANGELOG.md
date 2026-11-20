@@ -7,13 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-20
+
 ### Changed
 
 - `@whi/http-errors` is updated to 0.3.0, so an `HttpError` can carry
   several cookies: pass its headers as an array of name-value pairs (or a
-  `Headers` object) and every one is sent. `HttpError.headers` is now typed as `HeadersInit`
-  rather than `Record<string, string>`, so code that reads a value with
-  `err.headers['X-Foo']` needs a cast or `new Headers(err.headers).get('X-Foo')`.
+  `Headers` object) and every one is sent. `HttpError.headers` is now typed
+  as `HeadersInit` rather than `Record<string, string>`, so code that reads a
+  value with `err.headers['X-Foo']` needs a cast or
+  `new Headers(err.headers).get('X-Foo')`.
+- If your project also depends on `@whi/http-errors` directly, update it to
+  0.3 as well, or import `HttpError` from `@whi/cf-routing` instead. An
+  `HttpError` created from a separate 0.2 copy isn't recognised by the router,
+  so it gets a 500 instead of its own status.
 
 ### Fixed
 
