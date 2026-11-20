@@ -23,6 +23,13 @@ updates:
       groups:
           minor-and-patch:
               update-types: [minor, patch]
+      ignore:
+          # TypeDoc doesn't support TypeScript 7 yet, so npm can't install it
+          # alongside the docs build. Remove once TypeDoc lists 7 in its
+          # peerDependencies; tracked in #23, waiting on
+          # https://github.com/TypeStrong/typedoc/issues/3098
+          - dependency-name: typescript
+            versions: ['>=7']
     - package-ecosystem: github-actions
       directory: /
       target-branch: develop
