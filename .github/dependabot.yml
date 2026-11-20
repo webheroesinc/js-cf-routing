@@ -21,6 +21,11 @@ updates:
       schedule:
           interval: weekly
       groups:
+          # vitest and its plugins (@vitest/coverage-v8) must share a version,
+          # so they move together, majors included. Listed first because an
+          # update joins the first group it matches.
+          vitest:
+              patterns: ['vitest', '@vitest/*']
           minor-and-patch:
               update-types: [minor, patch]
       ignore:
