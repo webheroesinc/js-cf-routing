@@ -120,6 +120,12 @@ describe('WorkerRouter', () => {
 
             expect(result).toBe(router);
         });
+
+        it('should throw when a path is given without middleware', () => {
+            expect(() => router.use('/api/*')).toThrow(
+                'Middleware function required when path is specified'
+            );
+        });
     });
 
     describe('defineRouteHandler', () => {
@@ -173,6 +179,12 @@ describe('WorkerRouter', () => {
             const builtRouter = router.build();
 
             expect(builtRouter).toBe(router.router);
+        });
+
+        it('should return the same router when built twice', () => {
+            const first = router.build();
+
+            expect(router.build()).toBe(first);
         });
 
         it('should return 404 for unmatched routes', async () => {
@@ -611,6 +623,43 @@ describe('WorkerRouter CORS Configuration', () => {
             'https://admin.example.com'
         );
         expect(privateResponse.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+    });
+
+    it('should apply CorsConfig to 404 responses for unmatched routes', async () => {
+        const router = new WorkerRouter<Env>('test', {
+            cors: { origins: 'https://example.com' },
+        });
+        router.log.setLevel('fatal');
+        const builtRouter = router.build();
+
+        const response = await builtRouter.fetch(
+            new Request('https://example.com/missing', {
+                headers: { Origin: 'https://example.com' },
+            }),
+            { LOG_LEVEL: 'fatal' }
+        );
+
+        expect(response.status).toBe(404);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
+    });
+
+    it('should apply CorsConfig to preflights for paths with no route', async () => {
+        const router = new WorkerRouter<Env>('test', {
+            cors: { origins: 'https://example.com' },
+        });
+        router.log.setLevel('fatal');
+        const builtRouter = router.build();
+
+        const response = await builtRouter.fetch(
+            new Request('https://example.com/missing', {
+                method: 'OPTIONS',
+                headers: { Origin: 'https://example.com' },
+            }),
+            { LOG_LEVEL: 'fatal' }
+        );
+
+        expect(response.status).toBe(204);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
     });
 });
 

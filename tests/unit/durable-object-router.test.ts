@@ -457,6 +457,36 @@ describe('DurableObjectRouter', () => {
             const body = await response.json();
             expect(body).toEqual({ error: 'Not found' });
         });
+
+        it('should answer preflights for paths with no route with default CORS headers', async () => {
+            const builtRouter = router.build();
+
+            const response = await builtRouter.fetch(
+                new Request('https://example.com/missing', { method: 'OPTIONS' })
+            );
+
+            expect(response.status).toBe(204);
+            expect(response.headers.get('Access-Control-Allow-Methods')).toContain('GET');
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+        });
+
+        it('should apply CorsConfig to preflights for paths with no route', async () => {
+            const routerWithCors = new DurableObjectRouter(mockState, mockEnv, 'test-cors', {
+                cors: { origins: 'https://example.com' },
+            });
+            routerWithCors.log.setLevel('fatal');
+            const builtRouter = routerWithCors.build();
+
+            const response = await builtRouter.fetch(
+                new Request('https://example.com/missing', {
+                    method: 'OPTIONS',
+                    headers: { Origin: 'https://example.com' },
+                })
+            );
+
+            expect(response.status).toBe(204);
+            expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
+        });
     });
 
     describe('handle', () => {
