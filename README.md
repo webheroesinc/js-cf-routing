@@ -138,7 +138,9 @@ async post(ctx: Context) {
 ```
 
 To set more than one cookie, call `ctx.response.headers.append('Set-Cookie', ...)`
-for each; `set` replaces any cookie set before it.
+for each; `set` replaces any cookie set before it. Cookies are sent even if
+the handler then throws; other headers on `ctx.response` apply only when it
+returns normally.
 
 Or return a `Response` directly for full control:
 
@@ -307,7 +309,7 @@ LOG_LEVEL = "info"  # or "debug", "trace", etc.
 
 **https://webheroesinc.github.io/js-cf-routing/**
 
-API documentation is automatically generated from source code using TypeDoc and deployed on every push to master.
+API documentation is automatically generated from source code using TypeDoc and redeployed with each release, when it is merged to `master`.
 
 To generate locally:
 

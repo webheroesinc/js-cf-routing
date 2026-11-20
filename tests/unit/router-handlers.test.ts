@@ -159,6 +159,66 @@ describe('buildErrorResponse', () => {
         expect(response.headers.get('Set-Cookie')).toBe('session=; Max-Age=0');
     });
 
+    it('should carry cookies from ctx.response into HttpError responses, error last', async () => {
+        const ctx = createMockContext(new Request('https://example.com/test'), {
+            LOG_LEVEL: 'fatal',
+        });
+        ctx.response.headers.append('Set-Cookie', 'a=; Max-Age=0');
+        ctx.response.headers.append('Set-Cookie', 'session=old');
+        ctx.response.headers.set('Cache-Control', 'max-age=3600');
+
+        const response = buildErrorResponse(
+            new HttpError(401, 'Session expired', undefined, {
+                'Set-Cookie': 'session=; Max-Age=0',
+            }),
+            ctx
+        );
+
+        expect(response.headers.getSetCookie()).toEqual([
+            'a=; Max-Age=0',
+            'session=old',
+            'session=; Max-Age=0',
+        ]);
+        expect(response.headers.get('Cache-Control')).toBeNull();
+    });
+
+    it('should send every cookie an HttpError carries', async () => {
+        const ctx = createMockContext(new Request('https://example.com/test'), {
+            LOG_LEVEL: 'fatal',
+        });
+        ctx.response.headers.append('Set-Cookie', 'a=1');
+
+        const response = buildErrorResponse(
+            new HttpError(401, 'Session expired', null, [
+                ['Set-Cookie', 'session=; Max-Age=0'],
+                ['Set-Cookie', 'refresh=; Max-Age=0'],
+            ]),
+            ctx
+        );
+
+        expect(response.headers.getSetCookie()).toEqual([
+            'a=1',
+            'session=; Max-Age=0',
+            'refresh=; Max-Age=0',
+        ]);
+    });
+
+    it('should carry cookies from ctx.response into 500 responses', async () => {
+        const ctx = createMockContext(new Request('https://example.com/test'), {
+            LOG_LEVEL: 'fatal',
+        });
+        ctx.response.headers.append('Set-Cookie', 'a=1');
+        ctx.response.headers.append('Set-Cookie', 'b=2');
+        ctx.response.headers.set('Location', '/created/1');
+
+        const response = buildErrorResponse(new Error('boom'), ctx);
+
+        expect(response.status).toBe(500);
+        expect(response.headers.getSetCookie()).toEqual(['a=1', 'b=2']);
+        expect(response.headers.get('Location')).toBeNull();
+        expect(response.headers.get('Content-Type')).toBe('application/json');
+    });
+
     it('should include CORS headers when configured', async () => {
         const ctx = createMockContext(new Request('https://example.com/test'), {
             LOG_LEVEL: 'fatal',
