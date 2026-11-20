@@ -309,7 +309,7 @@ LOG_LEVEL = "info"  # or "debug", "trace", etc.
 
 **https://webheroesinc.github.io/js-cf-routing/**
 
-API documentation is automatically generated from source code using TypeDoc and deployed on every push to master.
+API documentation is automatically generated from source code using TypeDoc and redeployed with each release, when it is merged to `master`.
 
 To generate locally:
 
