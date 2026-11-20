@@ -83,6 +83,19 @@ function mergeHeaders(target: Headers, source: Headers): void {
 }
 
 /**
+ * Append each `Set-Cookie` in `source` to `target`. Error responses carry over
+ * cookies from ctx.response but not its other headers, which were meant for
+ * the success response.
+ */
+function appendCookies(target: Headers, source: Headers): void {
+    source.forEach((value, key) => {
+        if (key.toLowerCase() === 'set-cookie') {
+            target.append(key, value);
+        }
+    });
+}
+
+/**
  * Build an error Response from an error, preserving HttpError details and headers.
  *
  * @param error The error that was thrown
@@ -109,10 +122,12 @@ export function buildErrorResponse(
         // Use HttpError.toResponse() to preserve details and headers
         const response = error.toResponse();
 
-        // Create new headers merging CORS with error's headers
+        // Create new headers merging CORS with error's headers. Cookies set on
+        // ctx.response go first, so the error's own wins for the same name.
         const headers = new Headers({
             ...corsHeadersToApply,
         });
+        appendCookies(headers, ctx.response.headers);
         mergeHeaders(headers, response.headers);
 
         return new Response(response.body, {
@@ -123,12 +138,15 @@ export function buildErrorResponse(
     }
 
     // Unknown error - return 500
+    const headers = new Headers({
+        'Content-Type': 'application/json',
+        ...corsHeadersToApply,
+    });
+    appendCookies(headers, ctx.response.headers);
+
     return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
         status: 500,
-        headers: {
-            'Content-Type': 'application/json',
-            ...corsHeadersToApply,
-        },
+        headers,
     });
 }
 

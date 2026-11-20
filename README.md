@@ -138,7 +138,9 @@ async post(ctx: Context) {
 ```
 
 To set more than one cookie, call `ctx.response.headers.append('Set-Cookie', ...)`
-for each; `set` replaces any cookie set before it.
+for each; `set` replaces any cookie set before it. Cookies are sent even if
+the handler then throws; other headers on `ctx.response` apply only when it
+returns normally.
 
 Or return a `Response` directly for full control:
 

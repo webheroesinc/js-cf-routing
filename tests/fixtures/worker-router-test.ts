@@ -98,6 +98,19 @@ class CookiesHandler extends RouteHandler<Env> {
         ctx.response.headers.append('Set-Cookie', 'b=2; Path=/');
         return { ok: true };
     }
+
+    async delete(ctx: Context<Env>): Promise<any> {
+        ctx.response.headers.append('Set-Cookie', 'a=; Max-Age=0; Path=/');
+        ctx.response.headers.append('Set-Cookie', 'b=; Max-Age=0; Path=/');
+        throw new HttpError(401, 'Session expired');
+    }
+
+    async put(ctx: Context<Env>): Promise<any> {
+        throw new HttpError(401, 'Session expired', null, [
+            ['Set-Cookie', 'a=; Max-Age=0; Path=/'],
+            ['Set-Cookie', 'b=; Max-Age=0; Path=/'],
+        ]);
+    }
 }
 
 // Register direct route handlers

@@ -7,6 +7,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `@whi/http-errors` is updated to 0.3.0, so an `HttpError` can carry
+  several cookies: pass its headers as an array of name-value pairs (or a
+  `Headers` object) and every one is sent. `HttpError.headers` is now typed as `HeadersInit`
+  rather than `Record<string, string>`, so code that reads a value with
+  `err.headers['X-Foo']` needs a cast or `new Headers(err.headers).get('X-Foo')`.
+
+### Fixed
+
+- Cookies a handler or middleware sets on `ctx.response.headers` are sent
+  even when the request then fails, for example clearing a session cookie
+  before throwing a 401. Previously an error response dropped them without
+  any error. Other headers set on `ctx.response` still apply only to
+  successful responses. ([#12](https://github.com/webheroesinc/js-cf-routing/issues/12))
+
 ## [0.8.1] - 2026-11-20
 
 ### Fixed
