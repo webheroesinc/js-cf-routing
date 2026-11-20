@@ -248,6 +248,12 @@ and they must pass to merge. A release is a pull request from `develop` to
 publish workflow creates the tag, and a tag made locally would make it skip
 the release.
 
+To merge `develop` into `master` without releasing, for example to get
+tooling or Dependabot config changes onto `master` (Dependabot reads its
+config from there), add the `release:none` label to the PR instead of
+bumping. CI then requires the version to be unchanged from `master` and
+already tagged, so the merge stages nothing on npm.
+
 Merging to `master` runs `.github/workflows/publish.yml`, which stages the
 release on npm with trusted publishing, tags it and redeploys the docs.
 Nothing is live until a maintainer approves the staged release with 2FA
