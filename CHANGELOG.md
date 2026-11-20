@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Cookies a handler or middleware sets on `ctx.response.headers` are sent
+  even when the request then fails, for example clearing a session cookie
+  before throwing a 401. Previously an error response dropped them without
+  any error. Other headers set on `ctx.response` still apply only to
+  successful responses. ([#12](https://github.com/webheroesinc/js-cf-routing/issues/12))
+
 ## [0.8.1] - 2026-11-20
 
 ### Fixed
