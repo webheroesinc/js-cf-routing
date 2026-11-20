@@ -182,6 +182,27 @@ describe('buildErrorResponse', () => {
         expect(response.headers.get('Cache-Control')).toBeNull();
     });
 
+    it('should send every cookie an HttpError carries', async () => {
+        const ctx = createMockContext(new Request('https://example.com/test'), {
+            LOG_LEVEL: 'fatal',
+        });
+        ctx.response.headers.append('Set-Cookie', 'a=1');
+
+        const response = buildErrorResponse(
+            new HttpError(401, 'Session expired', null, [
+                ['Set-Cookie', 'session=; Max-Age=0'],
+                ['Set-Cookie', 'refresh=; Max-Age=0'],
+            ]),
+            ctx
+        );
+
+        expect(response.headers.getSetCookie()).toEqual([
+            'a=1',
+            'session=; Max-Age=0',
+            'refresh=; Max-Age=0',
+        ]);
+    });
+
     it('should carry cookies from ctx.response into 500 responses', async () => {
         const ctx = createMockContext(new Request('https://example.com/test'), {
             LOG_LEVEL: 'fatal',

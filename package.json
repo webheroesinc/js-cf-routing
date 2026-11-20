@@ -51,7 +51,7 @@
     "durable-objects"
   ],
   "dependencies": {
-    "@whi/http-errors": "^0.2.0",
+    "@whi/http-errors": "^0.3.0",
     "itty-router": "^5.0.18"
   },
   "devDependencies": {
