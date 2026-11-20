@@ -57,7 +57,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250708.0",
     "@vitest/coverage-v8": "^2.1.8",
-    "esbuild": "^0.24.2",
+    "esbuild": "^0.28.2",
     "miniflare": "^3.20241218.1",
     "prettier": "^3.6.2",
     "typedoc": "^0.28.14",
