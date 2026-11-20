@@ -92,9 +92,18 @@ class EchoHandler extends RouteHandler<Env> {
     }
 }
 
+class CookiesHandler extends RouteHandler<Env> {
+    async get(ctx: Context<Env>): Promise<any> {
+        ctx.response.headers.append('Set-Cookie', 'a=1; Path=/');
+        ctx.response.headers.append('Set-Cookie', 'b=2; Path=/');
+        return { ok: true };
+    }
+}
+
 // Register direct route handlers
 router.defineRouteHandler('/ping', PingHandler);
 router.defineRouteHandler('/echo', EchoHandler);
+router.defineRouteHandler('/cookies', CookiesHandler);
 
 // Build router with 404 handler
 const builtRouter = router.build();

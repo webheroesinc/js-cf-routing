@@ -45,6 +45,12 @@ describe('WorkerRouter Integration Smoke Tests', () => {
         expect(data.error).toBe('Bad Request Error');
     });
 
+    it('should send every Set-Cookie set by a handler', async () => {
+        const response = await worker.mf.dispatchFetch('http://localhost/cookies');
+
+        expect(response.headers.getSetCookie()).toEqual(['a=1; Path=/', 'b=2; Path=/']);
+    });
+
     it('should include CORS headers (without origin by default)', async () => {
         const response = await worker.mf.dispatchFetch('http://localhost/health');
 

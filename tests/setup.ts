@@ -18,6 +18,7 @@ export interface WorkerFixture {
 export async function setupWorkerRouter(): Promise<WorkerFixture> {
     const mf = new Miniflare({
         modules: true,
+        compatibilityDate: '2024-01-01',
         scriptPath: resolve('fixtures/dist/worker-router-test.js'),
         bindings: {
             LOG_LEVEL: 'fatal',
@@ -45,6 +46,7 @@ export interface DurableObjectFixture {
 export async function setupDurableObjectRouter(): Promise<DurableObjectFixture> {
     const mf = new Miniflare({
         modules: true,
+        compatibilityDate: '2024-01-01',
         scriptPath: resolve('fixtures/dist/durable-object-router-test.js'),
         bindings: {
             LOG_LEVEL: 'fatal',
