@@ -11,7 +11,7 @@ jobs:
             - uses: actions/checkout@v5
 
             - name: Setup Node.js
-              uses: actions/setup-node@v5
+              uses: actions/setup-node@v7
               with:
                   node-version-file: .nvmrc
                   cache: 'npm'
@@ -28,7 +28,7 @@ jobs:
             - uses: actions/checkout@v5
 
             - name: Setup Node.js
-              uses: actions/setup-node@v5
+              uses: actions/setup-node@v7
               with:
                   node-version-file: .nvmrc
                   cache: 'npm'
@@ -51,7 +51,7 @@ jobs:
                   fetch-depth: 0 # need tags to check whether this version is already released
 
             - name: Setup Node.js
-              uses: actions/setup-node@v5
+              uses: actions/setup-node@v7
               with:
                   node-version-file: .nvmrc
 
@@ -70,7 +70,7 @@ jobs:
             - uses: actions/checkout@v5
 
             - name: Setup Node.js
-              uses: actions/setup-node@v5
+              uses: actions/setup-node@v7
               with:
                   node-version-file: .nvmrc
                   cache: 'npm'
