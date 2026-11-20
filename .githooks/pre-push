@@ -1,0 +1,5 @@
+#!/bin/sh
+# Fast static checks before every push: typecheck and format:check.
+#
+# Bypass in a pinch with:  git push --no-verify
+npm run check

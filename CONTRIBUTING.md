@@ -104,7 +104,8 @@ npm run format        # Format code
 npm run format:check  # Check formatting
 ```
 
-We use Prettier for code formatting. Run `npm run format` before committing.
+We use Prettier for code formatting. Run `npm run format` before committing. `npm install`
+points git at `.githooks/`, whose `pre-push` runs `npm run check`.
 
 ## Making Changes
 

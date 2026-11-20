@@ -58,14 +58,27 @@ export function buildResponse(
     });
 
     // Merge in any custom headers from the context (overrides defaults)
-    ctx.response.headers.forEach((value, key) => {
-        headers.set(key, value);
-    });
+    mergeHeaders(headers, ctx.response.headers);
 
     return new Response(JSON.stringify(result), {
         status: ctx.response.status,
         statusText: ctx.response.statusText,
         headers,
+    });
+}
+
+/**
+ * Copy headers from `source` onto `target`, replacing any existing value for
+ * the same name. `Set-Cookie` values are appended instead, since each cookie
+ * must be sent as its own header and `set` would keep only the last one.
+ */
+function mergeHeaders(target: Headers, source: Headers): void {
+    source.forEach((value, key) => {
+        if (key.toLowerCase() === 'set-cookie') {
+            target.append(key, value);
+        } else {
+            target.set(key, value);
+        }
     });
 }
 
@@ -100,9 +113,7 @@ export function buildErrorResponse(
         const headers = new Headers({
             ...corsHeadersToApply,
         });
-        response.headers.forEach((value, key) => {
-            headers.set(key, value);
-        });
+        mergeHeaders(headers, response.headers);
 
         return new Response(response.body, {
             status: response.status,

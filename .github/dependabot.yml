@@ -1,0 +1,22 @@
+version: 2
+
+# Weekly dependency updates, opened against develop so they ship with the next
+# normal release. Minor and patch bumps arrive as one grouped PR; each major
+# bump gets its own PR so a breaking upgrade doesn't block the rest.
+#
+# Urgent security fixes are not configured here: a Dependabot rule in the repo
+# settings opens PRs only for critical alerts in runtime dependencies. Those go
+# to master, where they fail version-check until a release is cut, which is
+# intended: a fix only reaches users through a new version.
+#
+# Dependabot reads this file from the default branch (master), so changes take
+# effect after the next release.
+updates:
+    - package-ecosystem: npm
+      directory: /
+      target-branch: develop
+      schedule:
+          interval: weekly
+      groups:
+          minor-and-patch:
+              update-types: [minor, patch]
