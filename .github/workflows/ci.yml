@@ -3,6 +3,14 @@ name: CI
 on:
     pull_request:
         branches: [master, develop]
+        # labeled/unlabeled so adding or removing release:none re-runs
+        # version-check; the rest are the defaults.
+        types: [opened, synchronize, reopened, labeled, unlabeled]
+
+# Label changes re-run the whole workflow; cancel the superseded run.
+concurrency:
+    group: ci-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
 
 jobs:
     format:
@@ -41,7 +49,9 @@ jobs:
 
     # Only meaningful for a release (develop -> master), where a forgotten
     # version bump must fail before merge. Skipped on develop PRs, where there
-    # is nothing to release and no bump is expected.
+    # is nothing to release and no bump is expected. With the release:none
+    # label it instead requires the version to be unchanged and already
+    # released, so the merge stages nothing.
     version-check:
         runs-on: ubuntu-latest
         if: github.base_ref == 'master'
@@ -55,8 +65,11 @@ jobs:
               with:
                   node-version-file: .nvmrc
 
-            - name: Assert version is unreleased
+            - name: Assert version matches the release intent
               run: node scripts/assert-version-unreleased.mjs
+              env:
+                  RELEASE_NONE: ${{ contains(github.event.pull_request.labels.*.name, 'release:none') }}
+                  BASE_REF: ${{ github.base_ref }}
 
     test:
         runs-on: ubuntu-latest
