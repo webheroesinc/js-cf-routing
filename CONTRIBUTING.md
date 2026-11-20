@@ -265,6 +265,18 @@ under the `next` dist-tag. Record each release in `CHANGELOG.md`.
 7. Commit with clear messages
 8. Submit a pull request to `develop`
 
+## Reviewing Pull Requests
+
+Post every review as a comment on the pull request: the findings, each with
+enough reasoning that someone reading it later understands why it matters.
+Commits made in response then have their reasons next to the code instead of
+in a private conversation.
+
+Once the findings are dealt with, reply with a separate comment recording what
+happened to each: fixed (with the commit), filed (with the issue number), or
+left as is (with the reason). Leave the review comment itself unedited, so it
+stays a record of what was found.
+
 ## Questions?
 
 Open an issue on GitHub for questions or discussion about contributing.
