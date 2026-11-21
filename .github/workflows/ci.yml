@@ -1,16 +1,12 @@
 name: CI
 
 on:
+    # Label changes deliberately don't trigger a run: opening a PR with a label
+    # would start two runs at once, and GitHub can judge the PR by whichever
+    # one it records last, even if that one was cancelled. version-check reads
+    # the labels when it runs instead, so after changing release:none, re-run it.
     pull_request:
         branches: [master, develop]
-        # labeled/unlabeled so adding or removing release:none re-runs
-        # version-check; the rest are the defaults.
-        types: [opened, synchronize, reopened, labeled, unlabeled]
-
-# Label changes re-run the whole workflow; cancel the superseded run.
-concurrency:
-    group: ci-${{ github.event.pull_request.number }}
-    cancel-in-progress: true
 
 jobs:
     format:
@@ -55,6 +51,9 @@ jobs:
     version-check:
         runs-on: ubuntu-latest
         if: github.base_ref == 'master'
+        permissions:
+            contents: read
+            pull-requests: read # to read the PR's current labels
         steps:
             - uses: actions/checkout@v7
               with:
@@ -68,7 +67,9 @@ jobs:
             - name: Assert version matches the release intent
               run: node scripts/assert-version-unreleased.mjs
               env:
-                  RELEASE_NONE: ${{ contains(github.event.pull_request.labels.*.name, 'release:none') }}
+                  GH_TOKEN: ${{ github.token }}
+                  GH_REPO: ${{ github.repository }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
                   BASE_REF: ${{ github.base_ref }}
 
     test:
