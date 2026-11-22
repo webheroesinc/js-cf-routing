@@ -16,11 +16,11 @@ node_modules: package.json
 	touch $@
 
 # Build test worker fixture
-tests/fixtures/dist/worker-router-test.js: $(TEST_FIXTURES) lib/index.js tests/fixtures/package.json
+tests/fixtures/dist/worker-router-test.js: $(TEST_FIXTURES) lib/index.js
 	npm run build:test-worker
 	touch $@
 
 # Build test durable object fixture
-tests/fixtures/dist/durable-object-router-test.js: $(TEST_FIXTURES) lib/index.js tests/fixtures/package.json
+tests/fixtures/dist/durable-object-router-test.js: $(TEST_FIXTURES) lib/index.js
 	npm run build:test-do
 	touch $@
